@@ -45,9 +45,10 @@ This document describes implemented features in terms that can be reused for add
 
 ## Diagnostics and export
 
-- Download, album, overlay, thumbnail, history-storage, icon-import, and unexpected app-crash failures are written to a bounded app-private log that survives normal relaunches and app updates. The app keeps at most two 128 KiB log files.
-- Settings shows the number of saved failure events. Export diagnostic report opens Android's document picker and writes a text report to the location the user chooses. The report includes app and Android versions, device model and ABI, overlay/Accessibility/notification status, and saved failure events. It can also be exported when no failures have been recorded.
-- Stored event details remove web URLs, local paths, long numeric IDs, and common secret values. The app does not read system logcat or upload reports automatically.
+- Download, album, overlay, thumbnail, history-storage, icon-import, and unexpected app-crash failures are written to app-private files that survive normal relaunches and app updates. Separate operation traces record the stages and sanitized HTTP outcomes around a failure without displacing failure records.
+- The app keeps separate log files for the current UTC date and six preceding dates, so later activity cannot rotate away an earlier day's file. On the eighth day, the oldest date's files are deleted. It checks retention at app startup, at each UTC day change while its process runs, and whenever logs are written, counted, or exported. Each day allows up to 512 KiB of failures and 256 KiB of operation traces; reaching a limit records an omission marker. No Android alarm or external cleanup process is involved.
+- Settings shows the saved failure count. Export diagnostic report opens Android's document picker and writes a text report to the location the user chooses. It includes app and source-app versions, Android build and device details, display and network state, storage, permissions, button settings, recent active/unsuccessful job snapshots, failure events, and the operation trace. The job snapshot includes validated public post links without query strings, transfer sizes, selected formats, and photo errors so an issue can be investigated without connecting the phone. A report can be exported even when no failure has been recorded.
+- Stored event details remove web URLs, local paths, long numeric IDs, and common secret values. Exported public post links are included only from validated TikTok hosts and omit tracking parameters. The app does not read system logcat or upload reports automatically.
 
 ## Photo album downloads
 

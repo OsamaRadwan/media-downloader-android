@@ -19,6 +19,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public final class StreamResolver {
+    interface Trace { void event(String component, String detail); }
     static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36";
     private static final String MOBILE_USER_AGENT = "Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro) " +
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
@@ -87,13 +88,13 @@ public final class StreamResolver {
         }
     }
 
-    public static Result resolve(String shareUrl) throws Exception {
+    public static Result resolve(String shareUrl, Trace trace) throws Exception {
         CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
         String videoId = idFromUrl(shareUrl);
         boolean photoLink = false;
         if (videoId == null) {
             StringBuilder redirected = new StringBuilder();
-            String sharedHtml = fetchText(shareUrl, redirected, DESKTOP, cookies);
+            String sharedHtml = fetchText(shareUrl, redirected, DESKTOP, cookies, trace);
             Matcher photo = PHOTO_ID.matcher(redirected.toString());
             if (photo.find()) {
                 videoId = photo.group(1);
@@ -107,8 +108,8 @@ public final class StreamResolver {
         String pageUrl = "https://www.tiktok.com/@_/video/" + videoId;
         // TikTok sometimes omits its visitor cookie from a direct video-page response.
         // Establish the same anonymous web session before requesting signed media URLs.
-        try { openSession(cookies); } catch (Exception ignored) { /* The video page may still work. */ }
-        JSONObject item = itemFromPage(fetchText(pageUrl, null, DESKTOP, cookies), "webapp.video-detail");
+        try { openSession(cookies, trace); } catch (Exception ignored) { /* The video page may still work. */ }
+        JSONObject item = itemFromPage(fetchText(pageUrl, null, DESKTOP, cookies, trace), "webapp.video-detail");
         if (!videoId.equals(item.optString("id", ""))) throw new Exception("TikTok returned a different video");
         JSONObject author = item.optJSONObject("author");
         String accountId = author == null ? "" : author.optString("id", "");
@@ -135,13 +136,15 @@ public final class StreamResolver {
             int addedVariants = 0;
             for (BrowserProfile profile : new BrowserProfile[]{WIDE_DESKTOP, MOBILE}) {
                 try {
-                    JSONObject alternative = itemFromPage(fetchText(pageUrl, null, profile, cookies), "webapp.video-detail");
+                    JSONObject alternative = itemFromPage(fetchText(pageUrl, null, profile, cookies, trace), "webapp.video-detail");
                     if (!videoId.equals(alternative.optString("id", ""))) continue;
                     JSONObject alternatePost = alternative.optJSONObject("imagePost");
                     JSONArray alternateImages = alternatePost == null ? null : alternatePost.optJSONArray("images");
                     if (alternateImages == null || alternateImages.length() != photos.size()) continue;
                     addedVariants += mergePhotoCandidates(photos, photoCandidates(alternateImages));
                 } catch (Exception error) {
+                    trace(trace, "resolver.alternative", "profile=" + profileName(profile) +
+                        " error=" + DiagnosticsFormat.describe(error));
                     Log.w("MediaDownloader", "Additional photo browser profile unavailable: " + error.getMessage());
                 }
             }
@@ -294,15 +297,23 @@ public final class StreamResolver {
         } catch (Exception ignored) { return url; }
     }
 
-    private static void openSession(CookieManager cookies) throws Exception {
+    private static void openSession(CookieManager cookies, Trace trace) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("https://www.tiktok.com/").openConnection();
+        long started = System.nanoTime();
         try {
             connection.setConnectTimeout(10000);
             connection.setReadTimeout(10000);
             connection.setRequestProperty("User-Agent", USER_AGENT);
             MediaRequestCookies.attach(connection, cookies, true);
-            connection.getResponseCode();
+            int status = connection.getResponseCode();
             MediaRequestCookies.capture(connection, cookies);
+            trace(trace, "resolver.visitor_page", "host=" + connection.getURL().getHost() +
+                " http=" + status + " elapsedMs=" + (System.nanoTime() - started) / 1_000_000 +
+                " cookieCount=" + cookies.getCookieStore().getCookies().size());
+        } catch (Exception error) {
+            trace(trace, "resolver.visitor_page", "host=www.tiktok.com elapsedMs=" +
+                (System.nanoTime() - started) / 1_000_000 + " error=" + DiagnosticsFormat.describe(error));
+            throw error;
         } finally { connection.disconnect(); }
     }
 
@@ -329,8 +340,9 @@ public final class StreamResolver {
     }
 
     private static String fetchText(String url, StringBuilder resolvedUrl, BrowserProfile profile,
-                                    CookieManager cookies) throws Exception {
+                                    CookieManager cookies, Trace trace) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        long started = System.nanoTime();
         try {
             connection.setConnectTimeout(profile == DESKTOP ? 15000 : 10000);
             connection.setReadTimeout(profile == DESKTOP ? 15000 : 10000);
@@ -356,9 +368,28 @@ public final class StreamResolver {
                     out.write(buffer, 0, count);
                     if (out.size() > 5_000_000) throw new Exception("TikTok page was too large");
                 }
+                trace(trace, "resolver.page", "host=" + connection.getURL().getHost() +
+                    " profile=" + profileName(profile) + " http=" + code +
+                    " bytes=" + out.size() + " elapsedMs=" + (System.nanoTime() - started) / 1_000_000);
                 return new String(out.toByteArray(), StandardCharsets.UTF_8);
             }
+        } catch (Exception error) {
+            trace(trace, "resolver.page", "host=" + connection.getURL().getHost() +
+                " profile=" + profileName(profile) +
+                " elapsedMs=" + (System.nanoTime() - started) / 1_000_000 +
+                " error=" + DiagnosticsFormat.describe(error));
+            throw error;
         } finally { connection.disconnect(); }
+    }
+
+    private static String profileName(BrowserProfile profile) {
+        return profile == WIDE_DESKTOP ? "wide_desktop" : profile == MOBILE ? "mobile" : "desktop";
+    }
+
+    private static void trace(Trace sink, String component, String detail) {
+        if (sink == null) return;
+        try { sink.event(component, detail); }
+        catch (RuntimeException ignored) { /* Diagnostics must not affect resolution. */ }
     }
 
 }

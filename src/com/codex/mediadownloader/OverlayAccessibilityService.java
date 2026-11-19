@@ -153,6 +153,8 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         if (collecting) return;
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root != null && root.getPackageName() != null && getPackageName().contentEquals(root.getPackageName())) return;
+        DiagnosticsStore.trace(this, "overlay.tap", "source=" +
+            (root == null || root.getPackageName() == null ? "unavailable" : root.getPackageName()));
         AccessibilityNodeInfo share = null;
         if (root != null && root.getPackageName() != null && TIKTOK.contentEquals(root.getPackageName())) {
             share = find(root, "Share video");
@@ -165,6 +167,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             return;
         }
         collecting = true;
+        DiagnosticsStore.trace(this, "overlay.share", "Share control activated");
         handler.postDelayed(() -> {
             AccessibilityNodeInfo copy = find(getRootInActiveWindow(), "Copy link");
             long copyStartedAt = System.currentTimeMillis();
@@ -174,6 +177,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                 Toast.makeText(this, "Could not find Copy link", Toast.LENGTH_SHORT).show();
                 return;
             }
+            DiagnosticsStore.trace(this, "overlay.copy_link", "Copy link control activated");
             handler.postDelayed(() -> {
                 try {
                     if (overlay == null || overlayParams == null) throw new Exception("Download button disappeared");
@@ -209,6 +213,8 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             String host = Uri.parse(shareUrl).getHost();
             if (host == null || !(host.equals("tiktok.com") || host.endsWith(".tiktok.com"))) throw new Exception("Copied link is not from TikTok");
             Log.i("MediaDownloader", "Fresh TikTok link copied at " + copiedAt);
+            DiagnosticsStore.trace(this, "overlay.fresh_link", "host=" + host +
+                " clipboardAgeMs=" + Math.max(0, System.currentTimeMillis() - copiedAt));
             Intent intent = new Intent(this, DownloadService.class);
             intent.putExtra("shareUrl", shareUrl);
             startForegroundService(intent);

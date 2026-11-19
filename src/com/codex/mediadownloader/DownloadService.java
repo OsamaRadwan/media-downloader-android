@@ -94,6 +94,8 @@ public class DownloadService extends Service {
         entry.error = "";
         entry.finishedAt = 0;
         DownloadStore.save(this, entry, true);
+        DiagnosticsStore.trace(this, "download.queued", "job=" + jobId + " retry=" + (retry != null) +
+            " source=" + DiagnosticsFormat.publicPostUrl(shareUrl));
         notifications.notify(jobId, notice(jobId, "Download " + jobId, "Waiting to start", 0, true, true));
         transfers.execute(() -> runDownload(shareUrl, jobId, startId, entry, retry != null));
         return START_NOT_STICKY;
@@ -106,8 +108,10 @@ public class DownloadService extends Service {
             entry.state = "resolving";
             entry.stage = "Finding post details";
             DownloadStore.save(this, entry, false);
+            DiagnosticsStore.trace(this, "download.resolve", "job=" + jobId + " stage=" + entry.stage);
             notifications.notify(jobId, notice(jobId, title, "Finding post media", 0, true, true));
-            StreamResolver.Result result = StreamResolver.resolve(shareUrl);
+            StreamResolver.Result result = StreamResolver.resolve(shareUrl,
+                (component, detail) -> DiagnosticsStore.trace(this, component, "job=" + jobId + " " + detail));
             if (retry && (!result.isAlbum() || !result.videoId.equals(entry.videoId)))
                 throw new Exception("The shared album no longer matches this job");
             for (HttpCookie cookie : result.cookies.getCookieStore().getCookies())
@@ -122,6 +126,10 @@ public class DownloadService extends Service {
             entry.postTitle = result.postText.title;
             entry.caption = result.postText.description;
             entry.hashtags = result.postText.hashtags;
+            DiagnosticsStore.trace(this, "download.resolved", "job=" + jobId +
+                " kind=" + (result.isAlbum() ? "album" : "video") +
+                " streams=" + result.candidates.size() + " photos=" + result.photos.size() +
+                " visitorCookies=" + result.cookies.getCookieStore().getCookies().size());
             if (result.isAlbum()) {
                 final String albumTitle = title;
                 entry.mediaType = "album";
@@ -141,6 +149,9 @@ public class DownloadService extends Service {
                 String resultTitle = summary.failed == 0 ? "Album complete" : "Album incomplete";
                 notifications.notify(-jobId, resultNotice(resultTitle, entry.stage,
                     "Post: " + result.pageUrl + "\n" + entry.stage + "\nSize: " + formatBytes(entry.downloadedBytes), jobId));
+                DiagnosticsStore.trace(this, "download.album_result", "job=" + jobId +
+                    " saved=" + summary.complete + " failed=" + summary.failed +
+                    " bytes=" + entry.downloadedBytes);
                 return;
             }
             entry.fileName = fileName;
@@ -168,9 +179,15 @@ public class DownloadService extends Service {
                 "\nSize: " + formatBytes(saved.bytes) + "\nVideo: " + codecName(saved.tracks.videoMime) +
                 "\nAudio: " + codecName(saved.tracks.audioMime) + "\nSaved to Downloads";
             notifications.notify(-jobId, resultNotice("Download complete", saved.name, details, jobId));
+            DiagnosticsStore.trace(this, "download.complete", "job=" + jobId +
+                " bytes=" + saved.bytes + " resolution=" + saved.tracks.width + "x" + saved.tracks.height +
+                " video=" + saved.tracks.videoMime + " audio=" + saved.tracks.audioMime);
         } catch (Exception error) {
             Log.e("TikTokStream", "Download " + jobId + " failed", error);
             DiagnosticsStore.record(this, "download.failed job=" + jobId + " stage=" + entry.stage, error);
+            DiagnosticsStore.trace(this, "download.failed", "job=" + jobId + " state=" + entry.state +
+                " stage=" + entry.stage + " received=" + entry.downloadedBytes +
+                " total=" + entry.totalBytes + " option=" + entry.streamOption);
             String reason = error.getMessage() == null ? "Unknown error" : error.getMessage();
             entry.state = "failed";
             entry.stage = "Failed";
@@ -265,6 +282,11 @@ public class DownloadService extends Service {
                         throw invalidTracks;
                     }
                     Log.i("TikTokStream", "Selected muxed stream option=" + option +
+                        " listed=" + candidate.width + "x" + candidate.height +
+                        " actual=" + tracks.width + "x" + tracks.height +
+                        " video=" + tracks.videoMime + " audio=" + tracks.audioMime);
+                    DiagnosticsStore.trace(this, "video.selected", "job=" + jobId + " option=" + option +
+                        " host=" + new URL(candidate.url).getHost() +
                         " listed=" + candidate.width + "x" + candidate.height +
                         " actual=" + tracks.width + "x" + tracks.height +
                         " video=" + tracks.videoMime + " audio=" + tracks.audioMime);
@@ -379,8 +401,16 @@ public class DownloadService extends Service {
         connection.setRequestProperty("Accept", "video/mp4,video/*;q=0.9,*/*;q=0.8");
         if (profile == 4) connection.setRequestProperty("Range", "bytes=0-");
         MediaRequestCookies.attach(connection, cookies, visitorCookies);
+        long requestStarted = SystemClock.elapsedRealtime();
+        DiagnosticsStore.trace(this, "video.request", "job=" + jobId +
+            " host=" + connection.getURL().getHost() + " mode=" + (visitorCookies ? "visitor" : "public") +
+            " profile=" + profile + " listed=" + width + "x" + height);
         try {
             int code = connection.getResponseCode();
+            DiagnosticsStore.trace(this, "video.response", "job=" + jobId +
+                " host=" + connection.getURL().getHost() + " http=" + code +
+                " type=" + connection.getContentType() + " bytes=" + connection.getContentLengthLong() +
+                " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStarted));
             Log.d("TikTokStream", "Media response profile=" + profile + " host=" + connection.getURL().getHost() +
                 " status=" + code + " type=" + connection.getContentType());
             if (code != 200 && code != 206) throw new Exception(label + ": HTTP " + code);
@@ -426,6 +456,8 @@ public class DownloadService extends Service {
                 entry.totalBytes = total > 0 ? total : written;
                 entry.speedBytesPerSecond = 0;
                 DownloadStore.save(this, entry, false);
+                DiagnosticsStore.trace(this, "video.received", "job=" + jobId + " bytes=" + written +
+                    " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStarted));
                 notifications.notify(jobId, detailNotice(jobId, title, fileName, "Stream received", width, height, written, total, null));
             }
         } finally {

@@ -1,6 +1,7 @@
 package com.codex.mediadownloader;
 
 import java.util.regex.Pattern;
+import java.net.URI;
 
 /** Formats failure details without copying media URLs, local paths, or account identifiers. */
 final class DiagnosticsFormat {
@@ -24,22 +25,37 @@ final class DiagnosticsFormat {
 
     static String describe(Throwable error) {
         if (error == null) return "Unknown failure";
-        StringBuilder result = new StringBuilder(error.getClass().getName());
-        String message = clean(error.getMessage());
-        if (!message.isEmpty()) result.append(": ").append(message);
-        int frames = 0;
-        for (StackTraceElement frame : error.getStackTrace()) {
-            if (!frame.getClassName().startsWith("com.codex.mediadownloader.")) continue;
-            result.append(" | ").append(frame.getClassName()).append('.').append(frame.getMethodName())
-                .append(':').append(frame.getLineNumber());
-            if (++frames == 3) break;
+        StringBuilder result = new StringBuilder();
+        Throwable current = error;
+        for (int depth = 0; current != null && depth < 4; depth++) {
+            if (depth > 0) result.append(" | caused by ");
+            result.append(current.getClass().getName());
+            String message = clean(current.getMessage());
+            if (!message.isEmpty()) result.append(": ").append(message);
+            int frames = 0;
+            for (StackTraceElement frame : current.getStackTrace()) {
+                if (!frame.getClassName().startsWith("com.codex.mediadownloader.")) continue;
+                result.append(" | at ").append(frame.getClassName()).append('.').append(frame.getMethodName())
+                    .append(':').append(frame.getLineNumber());
+                if (++frames == 8) break;
+            }
+            if (current.getCause() == current) break;
+            current = current.getCause();
         }
-        Throwable cause = error.getCause();
-        if (cause != null && cause != error) {
-            result.append(" | cause=").append(cause.getClass().getName());
-            String causeMessage = clean(cause.getMessage());
-            if (!causeMessage.isEmpty()) result.append(": ").append(causeMessage);
-        }
-        return result.toString();
+        return result.length() > 2048 ? result.substring(0, 2048) + "…" : result.toString();
+    }
+
+    /** Only a public TikTok post or short-link path; query and fragment are never exported. */
+    static String publicPostUrl(String value) {
+        try {
+            URI uri = new URI(value);
+            String host = uri.getHost();
+            String path = uri.getRawPath();
+            if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null ||
+                !(host.equalsIgnoreCase("tiktok.com") || host.toLowerCase().endsWith(".tiktok.com")) ||
+                uri.getPort() != -1 || path == null || !path.matches("/[A-Za-z0-9@._/-]{1,220}"))
+                return "unavailable";
+            return "https://" + host.toLowerCase() + path;
+        } catch (Exception error) { return "unavailable"; }
     }
 }

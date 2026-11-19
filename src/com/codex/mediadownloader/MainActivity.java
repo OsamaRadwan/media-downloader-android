@@ -296,7 +296,7 @@ public class MainActivity extends Activity {
         });
 
         section(page, "Diagnostics");
-        addText(page, "Failures are saved on this phone. Export a report with Android version, permission status, and redacted error details when a feature fails on another device.", 13, MUTED, false, 7);
+        addText(page, "Keeps dated logs for the current UTC day and six prior days, with a size limit for each day. Export device details, failed jobs, and operation traces when a feature fails. Reports can include public post links with tracking details removed.", 13, MUTED, false, 7);
         diagnosticsStatus = addText(page, "", 13, MUTED, false, 10);
         button(page, "Export diagnostic report", this::pickDiagnosticsDestination);
 

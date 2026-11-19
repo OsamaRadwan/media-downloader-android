@@ -136,6 +136,10 @@ final class AlbumTransfer {
             }
         }
         if (best == null) throw new Exception(lastError == null ? "No image URL worked" : lastError.getMessage());
+        DiagnosticsStore.trace(context, "album.selected", "job=" + entry.id + " index=" + candidate.index +
+            " listed=" + candidate.width + "x" + candidate.height +
+            " actual=" + best.width + "x" + best.height + " bytes=" + selected.length() +
+            " fullPublic=" + fullPublic);
         return new Selection(best, selected);
     }
 
@@ -157,7 +161,16 @@ final class AlbumTransfer {
             connection.setRequestProperty("Referer", result.pageUrl);
             connection.setRequestProperty("Accept", "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8");
             MediaRequestCookies.attach(connection, result.cookies, visitorCookies);
+            long requestStarted = SystemClock.elapsedRealtime();
+            DiagnosticsStore.trace(context, "album.request", "job=" + entry.id + " index=" + candidate.index +
+                " host=" + connection.getURL().getHost() +
+                " mode=" + (visitorCookies ? "visitor" : "public") +
+                " listed=" + candidate.width + "x" + candidate.height);
             int status = connection.getResponseCode();
+            DiagnosticsStore.trace(context, "album.response", "job=" + entry.id + " index=" + candidate.index +
+                " host=" + connection.getURL().getHost() + " http=" + status +
+                " type=" + connection.getContentType() + " bytes=" + connection.getContentLengthLong() +
+                " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStarted));
             if (status != 200) throw new Exception("Image server returned HTTP " + status);
             long length = connection.getContentLengthLong();
             if (length > 40_000_000) throw new Exception("Photo exceeds 40 MB limit");
@@ -200,6 +213,9 @@ final class AlbumTransfer {
             bounds.inJustDecodeBounds = true;
             BitmapFactory.decodeFile(destination.getAbsolutePath(), bounds);
             if (bounds.outWidth < 1 || bounds.outHeight < 1) throw new Exception("Image could not be decoded");
+            DiagnosticsStore.trace(context, "album.received", "job=" + entry.id + " index=" + candidate.index +
+                " bytes=" + written + " actual=" + bounds.outWidth + "x" + bounds.outHeight +
+                " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStarted));
             return new PhotoFile(mime, extension, bounds.outWidth, bounds.outHeight);
         } finally { connection.disconnect(); }
     }

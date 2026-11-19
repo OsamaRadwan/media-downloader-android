@@ -16,12 +16,18 @@ $sources = @(
     'src\com\codex\mediadownloader\PostText.java',
     'src\com\codex\mediadownloader\PhotoQuality.java',
     'src\com\codex\mediadownloader\DiagnosticsFormat.java',
+    'src\com\codex\mediadownloader\DiagnosticsRetention.java',
+    'src\com\codex\mediadownloader\DiagnosticsFilePruner.java',
+    'src\com\codex\mediadownloader\DiagnosticsDailyLog.java',
     'src\com\codex\mediadownloader\MediaRequestCookies.java',
     'src\com\codex\mediadownloader\StreamResolver.java',
     'tests\com\codex\mediadownloader\ArchitectureBoundaryTest.java',
     'tests\com\codex\mediadownloader\Mp4SourceMetadataTest.java',
     'tests\com\codex\mediadownloader\PhotoRenditionTest.java',
     'tests\com\codex\mediadownloader\DiagnosticsFormatTest.java'
+    'tests\com\codex\mediadownloader\DiagnosticsRetentionTest.java'
+    'tests\com\codex\mediadownloader\DiagnosticsFilePrunerTest.java'
+    'tests\com\codex\mediadownloader\DiagnosticsDailyLogTest.java'
     'tests\com\codex\mediadownloader\MediaRequestCookiesTest.java'
 ) | ForEach-Object { Join-Path $project $_ }
 $androidJar = 'D:\Random\AndroidSdk\platforms\android-35\android.jar'
@@ -35,5 +41,11 @@ if ($LASTEXITCODE -ne 0) { throw 'MP4 metadata tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Photo rendition tests failed' }
 & java -cp $target com.codex.mediadownloader.DiagnosticsFormatTest
 if ($LASTEXITCODE -ne 0) { throw 'Diagnostic format tests failed' }
+& java -cp $target com.codex.mediadownloader.DiagnosticsRetentionTest
+if ($LASTEXITCODE -ne 0) { throw 'Diagnostic retention tests failed' }
+& java -cp $target com.codex.mediadownloader.DiagnosticsFilePrunerTest
+if ($LASTEXITCODE -ne 0) { throw 'Diagnostic file pruning tests failed' }
+& java -cp $target com.codex.mediadownloader.DiagnosticsDailyLogTest
+if ($LASTEXITCODE -ne 0) { throw 'Diagnostic daily log tests failed' }
 & java -cp $target com.codex.mediadownloader.MediaRequestCookiesTest
 if ($LASTEXITCODE -ne 0) { throw 'Media request cookie tests failed' }
