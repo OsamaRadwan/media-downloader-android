@@ -102,7 +102,9 @@
       top.append(title, date);
       const summary = document.createElement('p');
       summary.className = 'summary';
-      summary.textContent = (release.body || 'See the release notes for changes in this version.').replace(/^#+\s*/gm, '').slice(0, 440);
+      const paragraphs = (release.body || '').split(/\n\s*\n/).map(part => part.trim()).filter(part => part && !part.startsWith('#'));
+      const introduction = paragraphs[0] || 'See the release notes for changes in this version.';
+      summary.textContent = introduction.length > 320 ? introduction.slice(0, 317).replace(/\s+\S*$/, '') + '…' : introduction;
       const links = document.createElement('div');
       links.className = 'links';
       const apk = (release.assets || []).find(asset => asset.name.toLowerCase().endsWith('.apk'));

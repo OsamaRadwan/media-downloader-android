@@ -15,3 +15,5 @@ For photo posts, the app reads the complete ordered image list in the post data 
 New files use `<profile name>_profile_<account ID>_VideoID_<video ID>_<yyyy-MM-dd_hh-mm>.mp4`, using the video's publish time. Existing files from older versions remain in the phone's Downloads folder. The new app starts with its own appearance preferences and download history.
 
 Build with `./build.ps1` from PowerShell. It uses the Android SDK in `D:\Random\AndroidSdk` and produces `MediaDownloader.apk`. Run the pure architecture checks with `./test.ps1`. The reusable feature catalog is in `FEATURES.md`; architecture decisions and future-update instructions are in `docs/architecture.md` and `AGENTS.md`. The historical prototype is stored outside the active project.
+
+The [release checklist](docs/releasing.md) describes version tags, APK checksums, and publishing future versions. The download page lists published GitHub Releases automatically.
