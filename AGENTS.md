@@ -1,0 +1,3 @@
+# Project instructions
+
+For any future feature or update, read `docs/Android_Architecture_Standard_for_Codex.md` and `docs/architecture.md` before editing. For this existing Java app, follow the inspection and incremental migration rules in Section 16 of the standard. Preserve installed preference keys, download record JSON, notification routing, the Accessibility overlay, and saved-file behavior unless the user explicitly changes them. Keep UI separate from persistence, use typed validated settings, build with `build.ps1`, run `test.ps1`, and verify affected journeys on a connected phone when available. Update the architecture note when boundaries or contracts change. Explicit user instructions take precedence over these repository guidelines.

@@ -1,0 +1,34 @@
+$ErrorActionPreference = 'Stop'
+$project = $PSScriptRoot
+$sdk = 'D:\Random\AndroidSdk'
+$tools = Join-Path $sdk 'build-tools\35.0.0'
+$androidJar = Join-Path $sdk 'platforms\android-35\android.jar'
+$build = Join-Path $project 'build'
+$classes = Join-Path $build 'classes'
+$dex = Join-Path $build 'dex'
+$projectRoot = [IO.Path]::GetFullPath($project).TrimEnd('\') + '\'
+foreach ($target in @($classes, $dex)) {
+    $absoluteTarget = [IO.Path]::GetFullPath($target)
+    if (-not $absoluteTarget.StartsWith($projectRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Build path outside project' }
+    if (Test-Path -LiteralPath $absoluteTarget) { Remove-Item -LiteralPath $absoluteTarget -Recurse -Force }
+}
+New-Item -ItemType Directory -Force $build,$classes,$dex | Out-Null
+& (Join-Path $tools 'aapt2.exe') compile --dir (Join-Path $project 'res') -o (Join-Path $build 'resources.zip')
+if ($LASTEXITCODE -ne 0) { throw 'Resource compilation failed' }
+& (Join-Path $tools 'aapt2.exe') link -o (Join-Path $build 'base-unsigned.apk') --manifest (Join-Path $project 'AndroidManifest.xml') -I $androidJar (Join-Path $build 'resources.zip')
+if ($LASTEXITCODE -ne 0) { throw 'APK linking failed' }
+$sources = @(Get-ChildItem (Join-Path $project 'src') -Recurse -Filter '*.java' | ForEach-Object FullName)
+& javac -encoding UTF-8 --release 8 -cp $androidJar -d $classes @sources
+if ($LASTEXITCODE -ne 0) { throw 'Java compilation failed' }
+$classFiles = @(Get-ChildItem $classes -Recurse -Filter '*.class' | ForEach-Object FullName)
+& (Join-Path $tools 'd8.bat') --lib $androidJar --min-api 23 --output $dex @classFiles
+if ($LASTEXITCODE -ne 0) { throw 'DEX compilation failed' }
+Push-Location $dex
+try { & (Join-Path $tools 'aapt.exe') add (Join-Path $build 'base-unsigned.apk') 'classes.dex' }
+finally { Pop-Location }
+if ($LASTEXITCODE -ne 0) { throw 'Adding DEX failed' }
+& java -jar 'C:\apktool\uber-apk-signer.jar' -a (Join-Path $build 'base-unsigned.apk') -o (Join-Path $build 'release')
+if ($LASTEXITCODE -ne 0) { throw 'APK signing failed' }
+$signed = Join-Path $build 'release\base-aligned-debugSigned.apk'
+if (-not (Test-Path $signed)) { throw 'Signed APK was not produced' }
+Copy-Item -LiteralPath $signed -Destination (Join-Path $project 'MediaDownloader.apk') -Force

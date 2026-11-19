@@ -1,0 +1,12 @@
+/build/
+/*.png
+/*.mp4
+*.keystore
+*.jks
+*.p12
+*.log
+.idea/
+.vscode/
+local.properties
+
+# The verified root APK is intentionally tracked as a convenient source-tree artifact.
