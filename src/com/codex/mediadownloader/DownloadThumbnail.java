@@ -41,6 +41,7 @@ final class DownloadThumbnail {
                 } finally { image.recycle(); }
                 DownloadStore.setPhotoThumbnail(app, jobId, index, output.getAbsolutePath());
             } catch (Exception error) {
+                DiagnosticsStore.record(app, "thumbnail.album_restore job=" + jobId + " index=" + index, error);
                 Log.d("MediaDownloader", "Could not restore album thumbnail " + index, error);
             }
         });
@@ -75,6 +76,7 @@ final class DownloadThumbnail {
                     if (image != null) save(app, jobId, image);
                 }
             } catch (Exception error) {
+                DiagnosticsStore.record(app, "thumbnail.cover job=" + jobId, error);
                 Log.d("TikTokStream", "Cover image unavailable for download " + jobId, error);
             } finally {
                 if (connection != null) connection.disconnect();
@@ -90,6 +92,7 @@ final class DownloadThumbnail {
             Bitmap frame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
             if (frame != null) save(context, jobId, frame);
         } catch (Exception error) {
+            DiagnosticsStore.record(context, "thumbnail.video job=" + jobId, error);
             Log.d("TikTokStream", "Could not make video thumbnail for download " + jobId, error);
         } finally {
             try { retriever.release(); }
@@ -108,6 +111,7 @@ final class DownloadThumbnail {
             Bitmap image = BitmapFactory.decodeFile(imageFile.getAbsolutePath(), options);
             if (image != null) save(context, jobId, image);
         } catch (Exception error) {
+            DiagnosticsStore.record(context, "thumbnail.album job=" + jobId, error);
             Log.d("MediaDownloader", "Could not make album thumbnail for download " + jobId, error);
         }
     }
@@ -129,6 +133,7 @@ final class DownloadThumbnail {
             } finally { image.recycle(); }
             return output.getAbsolutePath();
         } catch (Exception error) {
+            DiagnosticsStore.record(context, "thumbnail.photo job=" + jobId + " index=" + index, error);
             Log.d("MediaDownloader", "Could not make photo thumbnail " + index, error);
             return "";
         }
@@ -142,6 +147,7 @@ final class DownloadThumbnail {
             Bitmap frame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
             if (frame != null) save(context, jobId, frame);
         } catch (Exception error) {
+            DiagnosticsStore.record(context, "thumbnail.saved_video job=" + jobId, error);
             Log.d("TikTokStream", "Could not make saved video thumbnail for download " + jobId, error);
         } finally {
             try { retriever.release(); }

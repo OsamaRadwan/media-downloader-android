@@ -60,7 +60,7 @@ final class AlbumTransfer {
                 Selection selection = selectBest(context, result, entry, candidate, progress, firstFile, secondFile);
                 PhotoFile image = selection.image;
                 File selected = selection.file;
-                if ("image/jpeg".equals(image.mime)) tagJpeg(selected, result);
+                if ("image/jpeg".equals(image.mime)) tagJpeg(context, selected, result);
                 String name = fileName(result, candidate.index, image.extension);
                 Saved saved = save(context, selected, name, image.mime);
                 photo.fileName = saved.name;
@@ -79,6 +79,7 @@ final class AlbumTransfer {
                     " listed=" + candidate.width + "x" + candidate.height);
             } catch (Exception error) {
                 photo.error = error.getMessage() == null ? "Image unavailable" : error.getMessage();
+                DiagnosticsStore.record(context, "album.photo job=" + entry.id + " index=" + candidate.index, error);
                 Log.w("MediaDownloader", "Album photo " + candidate.index + " failed", error);
             } finally {
                 firstFile.delete();
@@ -185,7 +186,7 @@ final class AlbumTransfer {
         } finally { connection.disconnect(); }
     }
 
-    private static void tagJpeg(File file, StreamResolver.Result result) {
+    private static void tagJpeg(Context context, File file, StreamResolver.Result result) {
         try {
             ExifInterface exif = new ExifInterface(file);
             String description = result.postText.description;
@@ -196,6 +197,7 @@ final class AlbumTransfer {
                 (result.postText.hashtags.isEmpty() ? "" : "\n" + result.postText.hashtags));
             exif.saveAttributes();
         } catch (Exception error) {
+            DiagnosticsStore.record(context, "album.metadata", error);
             Log.w("MediaDownloader", "Could not embed JPEG metadata; album record retains it", error);
         }
     }

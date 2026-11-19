@@ -42,6 +42,12 @@ This document describes implemented features in terms that can be reused for add
 - Progress and result notifications are silent. Tapping a job notification opens Media Downloader on the Downloads page and focuses that job and its details; the summary notification opens the Downloads page. Completion and failure remain visible in the list after the transfer ends.
 - Download records and appearance settings are stored locally; custom icon images are stored in app-private files. The Downloads list can show its saved records without network access.
 
+## Diagnostics and export
+
+- Download, album, overlay, thumbnail, history-storage, icon-import, and unexpected app-crash failures are written to a bounded app-private log that survives normal relaunches and app updates. The app keeps at most two 128 KiB log files.
+- Settings shows the number of saved failure events. Export diagnostic report opens Android's document picker and writes a text report to the location the user chooses. The report includes app and Android versions, device model and ABI, overlay/Accessibility/notification status, and saved failure events. It can also be exported when no failures have been recorded.
+- Stored event details remove web URLs, local paths, long numeric IDs, and common secret values. The app does not read system logcat or upload reports automatically.
+
 ## Photo album downloads
 
 - One tap on a photo post downloads the complete ordered image list supplied in the post data, including photos not yet swiped to. The resolver checks desktop, wide desktop, and mobile page responses for distinct signed renditions of each photo. The transfer fetches each discovered image address directly, without the source app's Save action or screenshots. For each photo it decodes the actual dimensions, chooses the most pixels (then the larger file at equal dimensions), and records whether the saved image matches TikTok's listed dimensions. The original upload resolution cannot be guaranteed when TikTok does not expose it.

@@ -28,6 +28,9 @@ import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
+import java.io.OutputStream;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Locale;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,6 +41,7 @@ public class MainActivity extends Activity {
     static final String DOWNLOADS_PAGE = "downloads";
     private static final String SETTINGS_PAGE = "settings";
     private static final int PICK_ICON_REQUEST = 42;
+    private static final int EXPORT_DIAGNOSTICS_REQUEST = 43;
     private static final int PAGE = 0xff102330;
     private static final int CARD = 0xff1b3443;
     private static final int TEXT = 0xfff3f7f9;
@@ -49,6 +53,7 @@ public class MainActivity extends Activity {
     private int focusJobId;
     private DownloadsPage downloadsPage;
     private DownloadRepository downloadRepository;
+    private DiagnosticsRepository diagnosticsRepository;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable refreshDownloads = new Runnable() {
         @Override public void run() {
@@ -69,6 +74,7 @@ public class MainActivity extends Activity {
     private TextView overlayStatus;
     private TextView accessibilityStatus;
     private TextView notificationStatus;
+    private TextView diagnosticsStatus;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -77,6 +83,7 @@ public class MainActivity extends Activity {
         prefs = new SharedPreferencesOverlayPreferences(this);
         customIcons = new CustomIconStore(this);
         downloadRepository = new PreferencesDownloadRepository(this);
+        diagnosticsRepository = new FileDiagnosticsRepository(this);
         downloadRepository.importExistingAsync();
         if (state != null) currentPage = state.getString("page", DOWNLOADS_PAGE);
         if (getIntent() != null && DOWNLOADS_PAGE.equals(getIntent().getStringExtra(EXTRA_PAGE))) {
@@ -128,6 +135,10 @@ public class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == EXPORT_DIAGNOSTICS_REQUEST) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) writeDiagnostics(data.getData());
+            return;
+        }
         if (requestCode != PICK_ICON_REQUEST || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri image = data.getData();
         Toast.makeText(this, "Adding icon…", Toast.LENGTH_SHORT).show();
@@ -140,6 +151,7 @@ public class MainActivity extends Activity {
                     Toast.makeText(this, "Added " + added.name, Toast.LENGTH_SHORT).show();
                 });
             } catch (Exception error) {
+                DiagnosticsStore.record(this, "settings.icon_import", error);
                 runOnUiThread(() -> Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show());
             }
         }, "custom-icon-import").start();
@@ -172,6 +184,7 @@ public class MainActivity extends Activity {
         overlayStatus = null;
         accessibilityStatus = null;
         notificationStatus = null;
+        diagnosticsStatus = null;
         if (DOWNLOADS_PAGE.equals(currentPage)) {
             downloadsPage = new DownloadsPage(this, new DownloadsController(downloadRepository), focusJobId);
             root.addView(downloadsPage.view(), new LinearLayout.LayoutParams(-1, 0, 1));
@@ -282,6 +295,11 @@ public class MainActivity extends Activity {
             startActivity(intent);
         });
 
+        section(page, "Diagnostics");
+        addText(page, "Failures are saved on this phone. Export a report with Android version, permission status, and redacted error details when a feature fails on another device.", 13, MUTED, false, 7);
+        diagnosticsStatus = addText(page, "", 13, MUTED, false, 10);
+        button(page, "Export diagnostic report", this::pickDiagnosticsDestination);
+
         section(page, "Reset");
         button(page, "Restore default appearance", () -> {
             prefs.reset();
@@ -313,6 +331,32 @@ public class MainActivity extends Activity {
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("image/*");
         startActivityForResult(intent, PICK_ICON_REQUEST);
+    }
+
+    private void pickDiagnosticsDestination() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("text/plain");
+        String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date());
+        intent.putExtra(Intent.EXTRA_TITLE, "MediaDownloader-diagnostics-" + stamp + ".txt");
+        try { startActivityForResult(intent, EXPORT_DIAGNOSTICS_REQUEST); }
+        catch (RuntimeException error) {
+            DiagnosticsStore.record(this, "settings.export_picker", error);
+            Toast.makeText(this, "Could not open a file picker", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void writeDiagnostics(Uri destination) {
+        new Thread(() -> {
+            try (OutputStream output = getContentResolver().openOutputStream(destination, "w")) {
+                if (output == null) throw new Exception("Selected document could not be opened");
+                diagnosticsRepository.exportTo(output);
+                runOnUiThread(() -> Toast.makeText(this, "Diagnostic report saved", Toast.LENGTH_LONG).show());
+            } catch (Exception error) {
+                DiagnosticsStore.record(this, "settings.export_write", error);
+                runOnUiThread(() -> Toast.makeText(this, "Could not save diagnostic report", Toast.LENGTH_LONG).show());
+            }
+        }, "diagnostics-export").start();
     }
 
     private void customIconRow(LinearLayout page, CustomIconStore.Entry entry) {
@@ -537,5 +581,7 @@ public class MainActivity extends Activity {
         accessibilityStatus.setText("Accessibility service: " + (enabled ? "On" : "Off"));
         boolean notifications = Build.VERSION.SDK_INT < 33 || checkSelfPermission("android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED;
         notificationStatus.setText("Notifications: " + (notifications ? "Allowed" : "Off"));
+        if (diagnosticsStatus != null)
+            diagnosticsStatus.setText("Saved failure events: " + diagnosticsRepository.eventCount());
     }
 }

@@ -7,6 +7,6 @@ The public repository is `OsamaRadwan/media-downloader-android`. GitHub Pages pu
 3. Record the APK's SHA-256 in the release notes. Copy it to `MediaDownloader-v<version>.apk` for the GitHub Release asset. Keep the root `MediaDownloader.apk` in the source commit as requested.
 4. Commit and push `main`; create and push the `v<version>` tag on that exact commit.
 5. Publish a GitHub Release from the tag. Paste the matching release notes and upload the versioned APK. Check the asset's SHA-256 and direct download URL.
-6. Open the [download page](https://osamaradwan.github.io/media-downloader-android/) and confirm the new version, APK link, and notes appear. GitHub Pages reads Releases dynamically; no page edit is needed for each version.
+6. Open the [download page](https://osamaradwan.github.io/media-downloader-android/) and confirm the new version, APK link, and notes appear. GitHub Pages reads Releases dynamically, including prereleases; no page edit is needed for each version. A release whose phone journey has not been tested should say so clearly and remain a prerelease until verified.
 
 The current build scripts use the local Android SDK at `D:\Random\AndroidSdk` and the existing debug signer at `C:\apktool\uber-apk-signer.jar`. Public release APKs must use a consistent signing key for Android to install an update over a prior release. The v1.49 APK is debug-signed, as stated in its release notes.

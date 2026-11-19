@@ -127,6 +127,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         try {
             windowManager.addView(icon, params);
         } catch (RuntimeException error) {
+            DiagnosticsStore.record(this, "overlay.add_view", error);
             Log.e("MediaDownloader", "Could not add overlay", error);
             return;
         }
@@ -159,6 +160,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             if (share == null) share = find(root, "Share post");
         }
         if (share == null || !share.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            DiagnosticsStore.record(this, "overlay.share", "Share action unavailable on current post");
             Toast.makeText(this, "Open a TikTok post first", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -167,6 +169,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             AccessibilityNodeInfo copy = find(getRootInActiveWindow(), "Copy link");
             long copyStartedAt = System.currentTimeMillis();
             if (copy == null || !copy.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                DiagnosticsStore.record(this, "overlay.copy_link", "Copy link action unavailable");
                 finishCollecting();
                 Toast.makeText(this, "Could not find Copy link", Toast.LENGTH_SHORT).show();
                 return;
@@ -214,6 +217,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     }
 
     private void failCollecting(Exception error) {
+        DiagnosticsStore.record(this, "overlay.start_download", error);
         Log.e("MediaDownloader", "Could not start download", error);
         Toast.makeText(this, "Could not start download: " + error.getMessage(), Toast.LENGTH_LONG).show();
         finishCollecting();

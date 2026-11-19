@@ -187,8 +187,11 @@ final class DownloadStore {
             }
             entry.updatedAt = System.currentTimeMillis();
             SharedPreferences.Editor editor = prefs.edit().putString(PREFIX + entry.id, entry.toJson().toString());
-            if (durable) editor.commit(); else editor.apply();
+            if (durable) {
+                if (!editor.commit()) DiagnosticsStore.record(context, "history.commit", "Download history commit returned false");
+            } else editor.apply();
         } catch (JSONException error) {
+            DiagnosticsStore.record(context, "history.save", error);
             Log.e("TikTokStream", "Could not save download details", error);
         }
     }
@@ -203,6 +206,7 @@ final class DownloadStore {
             entry.thumbnailPath = path;
             save(context, entry, true);
         } catch (JSONException error) {
+            DiagnosticsStore.record(context, "history.thumbnail", error);
             Log.e("TikTokStream", "Could not save thumbnail", error);
         }
     }
@@ -219,6 +223,7 @@ final class DownloadStore {
             photo.thumbnailPath = path;
             save(context, entry, true);
         } catch (JSONException error) {
+            DiagnosticsStore.record(context, "history.photo_thumbnail", error);
             Log.e("MediaDownloader", "Could not save photo thumbnail", error);
         }
     }
@@ -236,7 +241,10 @@ final class DownloadStore {
         for (Map.Entry<String, ?> item : all.entrySet()) {
             if (!item.getKey().startsWith(PREFIX) || !(item.getValue() instanceof String)) continue;
             try { entries.add(Entry.fromJson((String) item.getValue())); }
-            catch (JSONException error) { Log.w("TikTokStream", "Skipping damaged download record", error); }
+            catch (JSONException error) {
+                DiagnosticsStore.record(context, "history.damaged_record", error);
+                Log.w("TikTokStream", "Skipping damaged download record", error);
+            }
         }
         Collections.sort(entries, (a, b) -> Long.compare(b.createdAt, a.createdAt));
         return entries;
@@ -258,6 +266,7 @@ final class DownloadStore {
                 importExisting(app);
                 app.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean("legacy_imported", true).commit();
             } catch (Exception error) {
+                DiagnosticsStore.record(app, "history.import", error);
                 Log.w("TikTokStream", "Could not import earlier downloads", error);
             } finally {
                 synchronized (DownloadStore.class) { importRunning = false; }

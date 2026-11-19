@@ -1,0 +1,27 @@
+package com.codex.mediadownloader;
+
+public final class DiagnosticsFormatTest {
+    public static void main(String[] args) {
+        String input = "HTTP 403 https://cdn.example/photo?x-signature=secret123 " +
+            "/storage/emulated/0/Download/private.jpg account 7706415465383365909 token=abc123\nnext line";
+        String clean = DiagnosticsFormat.clean(input);
+        check(clean.contains("HTTP 403"), "Useful server status must remain");
+        check(clean.contains("[url]") && clean.contains("[path]") && clean.contains("[id]"),
+            "Source URLs, paths, and long IDs must be redacted");
+        check(clean.contains("token=[redacted]"), "Token values must be redacted");
+        check(!clean.contains("secret123") && !clean.contains("private.jpg") && !clean.contains("7706415465383365909"),
+            "Sensitive input must not survive formatting");
+        check(!clean.contains("\n"), "One failure must occupy one log line");
+        check(DiagnosticsFormat.clean("Saved at content://media/external/downloads/12345").contains("[url]"),
+            "Content-provider addresses must be redacted");
+        Exception failure = new Exception("Missing class at C:\\Users\\Name\\file.txt");
+        String described = DiagnosticsFormat.describe(failure);
+        check(described.contains("java.lang.Exception") && described.contains("[path]"),
+            "Exception type and redacted reason must remain");
+        System.out.println("DiagnosticsFormatTest passed");
+    }
+
+    private static void check(boolean condition, String message) {
+        if (!condition) throw new AssertionError(message);
+    }
+}

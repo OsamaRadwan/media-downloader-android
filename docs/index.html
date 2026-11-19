@@ -35,6 +35,7 @@
     .release { padding: 27px; border: 1px solid #244553; border-radius: 18px; background: #122b39; box-shadow: 0 15px 45px #06151e28; }
     .release-top { display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 16px; }
     .version { display: inline-block; margin-bottom: 8px; color: #7ee7d4; font-size: .8rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+    .prerelease { margin-left: 10px; color: #ffd48a; font-size: .75rem; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
     h3 { margin: 0; font-size: 1.45rem; }
     time { color: #91adb3; font-size: .9rem; }
     .summary { max-width: 800px; margin: 17px 0 20px; color: #c0d5d7; line-height: 1.6; white-space: pre-line; }
@@ -93,9 +94,16 @@
       const version = document.createElement('span');
       version.className = 'version';
       version.textContent = release.tag_name;
+      title.append(version);
+      if (release.prerelease) {
+        const label = document.createElement('span');
+        label.className = 'prerelease';
+        label.textContent = 'Prerelease';
+        title.append(label);
+      }
       const heading = document.createElement('h3');
       heading.textContent = release.name || release.tag_name;
-      title.append(version, heading);
+      title.append(heading);
       const date = document.createElement('time');
       date.dateTime = release.published_at || '';
       date.textContent = release.published_at ? new Intl.DateTimeFormat('en', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(release.published_at)) : '';
@@ -103,7 +111,7 @@
       const summary = document.createElement('p');
       summary.className = 'summary';
       const paragraphs = (release.body || '').split(/\n\s*\n/).map(part => part.trim()).filter(part => part && !part.startsWith('#'));
-      const introduction = paragraphs[0] || 'See the release notes for changes in this version.';
+      const introduction = (paragraphs[0] || 'See the release notes for changes in this version.').replace(/\*\*/g, '');
       summary.textContent = introduction.length > 320 ? introduction.slice(0, 317).replace(/\s+\S*$/, '') + '…' : introduction;
       const links = document.createElement('div');
       links.className = 'links';
@@ -121,7 +129,7 @@
           const response = await fetch(`https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`, { headers: { Accept: 'application/vnd.github+json' } });
           if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
           const batch = await response.json();
-          releases.push(...batch.filter(release => !release.draft && !release.prerelease));
+          releases.push(...batch.filter(release => !release.draft));
           if (batch.length < 100) break;
         }
         if (releases.length) list.replaceChildren(...releases.map(renderRelease));

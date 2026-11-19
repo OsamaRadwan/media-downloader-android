@@ -174,6 +174,7 @@ public class DownloadService extends Service {
             notifications.notify(-jobId, resultNotice("Download complete", saved.name, details, jobId));
         } catch (Exception error) {
             Log.e("TikTokStream", "Download " + jobId + " failed", error);
+            DiagnosticsStore.record(this, "download.failed job=" + jobId + " stage=" + entry.stage, error);
             String reason = error.getMessage() == null ? "Unknown error" : error.getMessage();
             entry.state = "failed";
             entry.stage = "Failed";
@@ -236,6 +237,7 @@ public class DownloadService extends Service {
                             break;
                         } catch (Exception error) {
                             accessError = error;
+                            DiagnosticsStore.record(this, "stream.request job=" + jobId + " option=" + option + " profile=" + profile, error);
                             Log.w("TikTokStream", "Stream option " + option + " request profile " + profile +
                                 " failed: " + error.getMessage());
                             video.delete();
@@ -263,6 +265,7 @@ public class DownloadService extends Service {
                         " video=" + tracks.videoMime + " audio=" + tracks.audioMime);
                     break;
                 } catch (Exception candidateError) {
+                    DiagnosticsStore.record(this, "stream.candidate job=" + jobId + " option=" + option, candidateError);
                     lastError = candidateError.getMessage();
                     if (lastError != null && lastError.contains("HTTP 403")) accessDenied++;
                     if (lastError != null && lastError.contains("audio")) noAudio++;

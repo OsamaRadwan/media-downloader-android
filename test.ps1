@@ -15,10 +15,12 @@ $sources = @(
     'src\com\codex\mediadownloader\Mp4SourceMetadata.java',
     'src\com\codex\mediadownloader\PostText.java',
     'src\com\codex\mediadownloader\PhotoQuality.java',
+    'src\com\codex\mediadownloader\DiagnosticsFormat.java',
     'src\com\codex\mediadownloader\StreamResolver.java',
     'tests\com\codex\mediadownloader\ArchitectureBoundaryTest.java',
     'tests\com\codex\mediadownloader\Mp4SourceMetadataTest.java',
-    'tests\com\codex\mediadownloader\PhotoRenditionTest.java'
+    'tests\com\codex\mediadownloader\PhotoRenditionTest.java',
+    'tests\com\codex\mediadownloader\DiagnosticsFormatTest.java'
 ) | ForEach-Object { Join-Path $project $_ }
 $androidJar = 'D:\Random\AndroidSdk\platforms\android-35\android.jar'
 & javac -encoding UTF-8 --release 8 -cp $androidJar -d $target @sources
@@ -29,3 +31,5 @@ if ($LASTEXITCODE -ne 0) { throw 'Architecture tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'MP4 metadata tests failed' }
 & java -cp "$target;$androidJar" com.codex.mediadownloader.PhotoRenditionTest
 if ($LASTEXITCODE -ne 0) { throw 'Photo rendition tests failed' }
+& java -cp $target com.codex.mediadownloader.DiagnosticsFormatTest
+if ($LASTEXITCODE -ne 0) { throw 'Diagnostic format tests failed' }
