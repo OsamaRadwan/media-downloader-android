@@ -16,14 +16,12 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
-import java.net.URI;
 import java.net.URL;
 import java.text.SimpleDateFormat;
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 /** Transfers each image in an ordered album while retaining successful files on partial failure. */
 final class AlbumTransfer {
@@ -100,10 +98,32 @@ final class AlbumTransfer {
         PhotoFile best = null;
         File selected = null;
         Exception lastError = null;
+        List<String> visitorFallbacks = new ArrayList<>();
         for (String url : candidate.urls) {
             File optionFile = selected == firstFile ? secondFile : firstFile;
             try {
-                PhotoFile option = fetch(context, result, entry, candidate, url, optionFile, progress);
+                PhotoFile option = fetch(context, result, entry, candidate, url, optionFile, progress, false);
+                if (best == null || PhotoQuality.better(option.width, option.height, optionFile.length(),
+                    best.width, best.height, selected.length())) {
+                    if (selected != null) selected.delete();
+                    best = option;
+                    selected = optionFile;
+                } else optionFile.delete();
+            } catch (Exception error) {
+                lastError = error;
+                if (MediaRequestCookies.retryWithVisitorCookies(error)) {
+                    visitorFallbacks.add(url);
+                    DiagnosticsStore.record(context, "album.public job=" + entry.id + " index=" + candidate.index, error);
+                }
+                optionFile.delete();
+            }
+        }
+        long listedPixels = (long) candidate.width * candidate.height;
+        boolean fullPublic = best != null && (listedPixels <= 0 || (long) best.width * best.height >= listedPixels);
+        if (!fullPublic) for (String url : visitorFallbacks) {
+            File optionFile = selected == firstFile ? secondFile : firstFile;
+            try {
+                PhotoFile option = fetch(context, result, entry, candidate, url, optionFile, progress, true);
                 if (best == null || PhotoQuality.better(option.width, option.height, optionFile.length(),
                     best.width, best.height, selected.length())) {
                     if (selected != null) selected.delete();
@@ -127,7 +147,7 @@ final class AlbumTransfer {
 
     private static PhotoFile fetch(Context context, StreamResolver.Result result, DownloadStore.Entry entry,
                                    StreamResolver.PhotoCandidate candidate, String url, File destination,
-                                   Progress progress) throws Exception {
+                                   Progress progress, boolean visitorCookies) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
         try {
             connection.setConnectTimeout(15000);
@@ -136,9 +156,7 @@ final class AlbumTransfer {
             connection.setRequestProperty("User-Agent", StreamResolver.USER_AGENT);
             connection.setRequestProperty("Referer", result.pageUrl);
             connection.setRequestProperty("Accept", "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8");
-            Map<String, List<String>> stored = result.cookies.get(new URI(url), Collections.emptyMap());
-            List<String> cookies = stored.get("Cookie");
-            if (cookies != null && !cookies.isEmpty()) connection.setRequestProperty("Cookie", String.join("; ", cookies));
+            MediaRequestCookies.attach(connection, result.cookies, visitorCookies);
             int status = connection.getResponseCode();
             if (status != 200) throw new Exception("Image server returned HTTP " + status);
             long length = connection.getContentLengthLong();

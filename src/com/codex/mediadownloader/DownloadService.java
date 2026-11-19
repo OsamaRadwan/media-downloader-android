@@ -25,15 +25,11 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.HttpCookie;
-import java.net.URI;
 import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 import java.util.HashSet;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -228,22 +224,31 @@ public class DownloadService extends Service {
                     Log.i("TikTokStream", "Trying stream option " + option + " " + candidate.width +
                         "x" + candidate.height + " " + (candidate.variant.equals("default") ? "default" : "bitrate"));
                     Exception accessError = null;
-                    for (int profile = 0; profile < (Build.VERSION.SDK_INT >= 34 ? 6 : 5); profile++) {
-                        try {
-                            fetch(candidate.url, result.pageUrl, result.cookies, profile, video,
-                                "Downloading stream • option " + option, jobId, title, fileName,
-                                candidate.width, candidate.height, entry);
-                            accessError = null;
-                            break;
-                        } catch (Exception error) {
-                            accessError = error;
-                            DiagnosticsStore.record(this, "stream.request job=" + jobId + " option=" + option + " profile=" + profile, error);
-                            Log.w("TikTokStream", "Stream option " + option + " request profile " + profile +
-                                " failed: " + error.getMessage());
-                            video.delete();
-                            String reason = error.getMessage();
-                            if (reason == null || (!reason.contains("HTTP 403") &&
-                                !reason.contains("page instead of MP4"))) break;
+                    try {
+                        fetch(candidate.url, result.pageUrl, result.cookies, 0, false, video,
+                            "Downloading stream • option " + option, jobId, title, fileName,
+                            candidate.width, candidate.height, entry);
+                        Log.i("TikTokStream", "Stream option " + option + " downloaded without visitor cookies");
+                    } catch (Exception publicError) {
+                        accessError = publicError;
+                        DiagnosticsStore.record(this, "stream.public job=" + jobId + " option=" + option, publicError);
+                        video.delete();
+                        if (!MediaRequestCookies.retryWithVisitorCookies(publicError)) throw publicError;
+                        for (int profile = 0; profile < (Build.VERSION.SDK_INT >= 34 ? 6 : 5); profile++) {
+                            try {
+                                fetch(candidate.url, result.pageUrl, result.cookies, profile, true, video,
+                                    "Downloading stream • option " + option, jobId, title, fileName,
+                                    candidate.width, candidate.height, entry);
+                                accessError = null;
+                                break;
+                            } catch (Exception error) {
+                                accessError = error;
+                                DiagnosticsStore.record(this, "stream.visitor job=" + jobId + " option=" + option + " profile=" + profile, error);
+                                Log.w("TikTokStream", "Stream option " + option + " visitor profile " + profile +
+                                    " failed: " + error.getMessage());
+                                video.delete();
+                                if (!MediaRequestCookies.retryWithVisitorCookies(error)) break;
+                            }
                         }
                     }
                     if (accessError != null) throw accessError;
@@ -356,6 +361,7 @@ public class DownloadService extends Service {
     }
 
     private void fetch(String url, String referer, java.net.CookieManager cookies, int profile,
+                       boolean visitorCookies,
                        File file, String label, int jobId, String title, String fileName,
                        int width, int height, DownloadStore.Entry entry) throws Exception {
         HttpEngine engine = profile == 5 ? new HttpEngine.Builder(this).build() : null;
@@ -372,10 +378,7 @@ public class DownloadService extends Service {
         else if (profile == 1) connection.setRequestProperty("Referer", "https://www.tiktok.com/");
         connection.setRequestProperty("Accept", "video/mp4,video/*;q=0.9,*/*;q=0.8");
         if (profile == 4) connection.setRequestProperty("Range", "bytes=0-");
-        Map<String, List<String>> stored = cookies.get(new URI(url), Collections.emptyMap());
-        List<String> cookieValues = stored.get("Cookie");
-        if (cookieValues != null && !cookieValues.isEmpty())
-            connection.setRequestProperty("Cookie", String.join("; ", cookieValues));
+        MediaRequestCookies.attach(connection, cookies, visitorCookies);
         try {
             int code = connection.getResponseCode();
             Log.d("TikTokStream", "Media response profile=" + profile + " host=" + connection.getURL().getHost() +

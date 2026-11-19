@@ -3,7 +3,6 @@ package com.codex.mediadownloader;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.CookieHandler;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.URL;
@@ -88,16 +87,13 @@ public final class StreamResolver {
         }
     }
 
-    public static synchronized Result resolve(String shareUrl) throws Exception {
+    public static Result resolve(String shareUrl) throws Exception {
         CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
-        CookieHandler previousCookies = CookieHandler.getDefault();
-        CookieHandler.setDefault(cookies);
-        try {
         String videoId = idFromUrl(shareUrl);
         boolean photoLink = false;
         if (videoId == null) {
             StringBuilder redirected = new StringBuilder();
-            String sharedHtml = fetchText(shareUrl, redirected);
+            String sharedHtml = fetchText(shareUrl, redirected, DESKTOP, cookies);
             Matcher photo = PHOTO_ID.matcher(redirected.toString());
             if (photo.find()) {
                 videoId = photo.group(1);
@@ -111,8 +107,8 @@ public final class StreamResolver {
         String pageUrl = "https://www.tiktok.com/@_/video/" + videoId;
         // TikTok sometimes omits its visitor cookie from a direct video-page response.
         // Establish the same anonymous web session before requesting signed media URLs.
-        try { openSession(); } catch (Exception ignored) { /* The video page may still work. */ }
-        JSONObject item = itemFromPage(fetchText(pageUrl), "webapp.video-detail");
+        try { openSession(cookies); } catch (Exception ignored) { /* The video page may still work. */ }
+        JSONObject item = itemFromPage(fetchText(pageUrl, null, DESKTOP, cookies), "webapp.video-detail");
         if (!videoId.equals(item.optString("id", ""))) throw new Exception("TikTok returned a different video");
         JSONObject author = item.optJSONObject("author");
         String accountId = author == null ? "" : author.optString("id", "");
@@ -139,7 +135,7 @@ public final class StreamResolver {
             int addedVariants = 0;
             for (BrowserProfile profile : new BrowserProfile[]{WIDE_DESKTOP, MOBILE}) {
                 try {
-                    JSONObject alternative = itemFromPage(fetchText(pageUrl, null, profile), "webapp.video-detail");
+                    JSONObject alternative = itemFromPage(fetchText(pageUrl, null, profile, cookies), "webapp.video-detail");
                     if (!videoId.equals(alternative.optString("id", ""))) continue;
                     JSONObject alternatePost = alternative.optJSONObject("imagePost");
                     JSONArray alternateImages = alternatePost == null ? null : alternatePost.optJSONArray("images");
@@ -206,9 +202,6 @@ public final class StreamResolver {
         });
         return new Result(profileName, accountId, videoId, coverUrl, pageUrl, postText,
             publishTimeSeconds, candidates, Collections.emptyList(), cookies);
-        } finally {
-            CookieHandler.setDefault(previousCookies);
-        }
     }
 
     private static void addPlayback(List<Candidate> candidates, Object address, int width, int height, String variant) {
@@ -301,13 +294,15 @@ public final class StreamResolver {
         } catch (Exception ignored) { return url; }
     }
 
-    private static void openSession() throws Exception {
+    private static void openSession(CookieManager cookies) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("https://www.tiktok.com/").openConnection();
         try {
             connection.setConnectTimeout(10000);
             connection.setReadTimeout(10000);
             connection.setRequestProperty("User-Agent", USER_AGENT);
+            MediaRequestCookies.attach(connection, cookies, true);
             connection.getResponseCode();
+            MediaRequestCookies.capture(connection, cookies);
         } finally { connection.disconnect(); }
     }
 
@@ -333,39 +328,36 @@ public final class StreamResolver {
         return item;
     }
 
-    private static String fetchText(String url) throws Exception {
-        return fetchText(url, null);
-    }
-
-    private static String fetchText(String url, StringBuilder resolvedUrl) throws Exception {
-        return fetchText(url, resolvedUrl, DESKTOP);
-    }
-
-    private static String fetchText(String url, StringBuilder resolvedUrl, BrowserProfile profile) throws Exception {
+    private static String fetchText(String url, StringBuilder resolvedUrl, BrowserProfile profile,
+                                    CookieManager cookies) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-        connection.setConnectTimeout(profile == DESKTOP ? 15000 : 10000);
-        connection.setReadTimeout(profile == DESKTOP ? 15000 : 10000);
-        connection.setInstanceFollowRedirects(true);
-        connection.setRequestProperty("User-Agent", profile.userAgent);
-        if (profile.wide) {
-            connection.setRequestProperty("Viewport-Width", "4096");
-            connection.setRequestProperty("Sec-CH-Viewport-Width", "4096");
-            connection.setRequestProperty("DPR", "2");
-            connection.setRequestProperty("Sec-CH-DPR", "2");
-            connection.setRequestProperty("Width", "4096");
-        }
-        connection.setRequestProperty("Accept", "text/html,application/xhtml+xml");
-        int code = connection.getResponseCode();
-        if (resolvedUrl != null) resolvedUrl.append(connection.getURL());
-        if (code != 200) throw new Exception("TikTok page returned HTTP " + code);
-        try (InputStream in = connection.getInputStream(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            byte[] buffer = new byte[8192];
-            int count;
-            while ((count = in.read(buffer)) != -1) {
-                out.write(buffer, 0, count);
-                if (out.size() > 5_000_000) throw new Exception("TikTok page was too large");
+        try {
+            connection.setConnectTimeout(profile == DESKTOP ? 15000 : 10000);
+            connection.setReadTimeout(profile == DESKTOP ? 15000 : 10000);
+            connection.setInstanceFollowRedirects(true);
+            connection.setRequestProperty("User-Agent", profile.userAgent);
+            if (profile.wide) {
+                connection.setRequestProperty("Viewport-Width", "4096");
+                connection.setRequestProperty("Sec-CH-Viewport-Width", "4096");
+                connection.setRequestProperty("DPR", "2");
+                connection.setRequestProperty("Sec-CH-DPR", "2");
+                connection.setRequestProperty("Width", "4096");
             }
-            return new String(out.toByteArray(), StandardCharsets.UTF_8);
+            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml");
+            MediaRequestCookies.attach(connection, cookies, true);
+            int code = connection.getResponseCode();
+            MediaRequestCookies.capture(connection, cookies);
+            if (resolvedUrl != null) resolvedUrl.append(connection.getURL());
+            if (code != 200) throw new Exception("TikTok page returned HTTP " + code);
+            try (InputStream in = connection.getInputStream(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                byte[] buffer = new byte[8192];
+                int count;
+                while ((count = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, count);
+                    if (out.size() > 5_000_000) throw new Exception("TikTok page was too large");
+                }
+                return new String(out.toByteArray(), StandardCharsets.UTF_8);
+            }
         } finally { connection.disconnect(); }
     }
 
