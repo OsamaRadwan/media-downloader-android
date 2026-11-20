@@ -40,14 +40,20 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private OverlayPlacement placement = OverlayPlacement.TIKTOK;
     private Rect landscapeVideoBounds;
     private boolean landscapeCapture;
-    private final Runnable visibilityCheck = this::syncVisibility;
+    private boolean visibilityCheckQueued;
+    private boolean visibilityCheckImmediate;
+    private final Runnable visibilityCheck = () -> {
+        visibilityCheckQueued = false;
+        visibilityCheckImmediate = false;
+        syncVisibility();
+    };
 
     @Override protected void onServiceConnected() {
         super.onServiceConnected();
         settings = new SharedPreferencesOverlayPreferences(this);
         customIcons = new CustomIconStore(this);
         settings.startObserving(() -> handler.post(this::refreshOverlay));
-        scheduleVisibilityCheck();
+        scheduleVisibilityCheck(0);
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
@@ -57,25 +63,32 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             type != AccessibilityEvent.TYPE_WINDOWS_CHANGED &&
             type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && type != AccessibilityEvent.TYPE_VIEW_SCROLLED) return;
         if (collecting) return;
-        if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-            handler.removeCallbacks(visibilityCheck);
-            handler.post(visibilityCheck);
-        } else {
-            scheduleVisibilityCheck();
-        }
+        scheduleVisibilityCheck(type == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
+            type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ? 0 : 50);
     }
 
     @Override public void onInterrupt() { }
     @Override public void onDestroy() {
         handler.removeCallbacks(visibilityCheck);
+        visibilityCheckQueued = false;
+        visibilityCheckImmediate = false;
         if (settings != null) settings.stopObserving();
         hideOverlay();
         super.onDestroy();
     }
 
     private void scheduleVisibilityCheck() {
-        handler.removeCallbacks(visibilityCheck);
-        handler.postDelayed(visibilityCheck, 150);
+        scheduleVisibilityCheck(0);
+    }
+
+    private void scheduleVisibilityCheck(long delayMs) {
+        if (visibilityCheckQueued) {
+            if (delayMs != 0 || visibilityCheckImmediate) return;
+            handler.removeCallbacks(visibilityCheck);
+        }
+        visibilityCheckQueued = true;
+        visibilityCheckImmediate = delayMs == 0;
+        handler.postDelayed(visibilityCheck, delayMs);
     }
 
     private void syncVisibility() {
