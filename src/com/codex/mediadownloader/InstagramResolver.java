@@ -8,6 +8,7 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.net.URLEncoder;
 import android.util.Log;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -55,8 +56,34 @@ final class InstagramResolver {
             // other images on the page may belong to suggested posts.
             String profile = singlePhotoProfile(html, code);
             if (profile == null) throw new Exception("Instagram did not expose public media details for this post");
-            String profileHtml = fetch("https://www.instagram.com/" + profile + "/", "Mozilla/5.0", trace);
-            result = parseSinglePhoto(html, profileHtml, canonical, code);
+            String postId = idFromShortcode(code);
+            String accountId = "";
+            String caption = "";
+            try {
+                String endpoint = "https://www.instagram.com/api/v1/oembed/?url=" +
+                    URLEncoder.encode(canonical, "UTF-8");
+                JSONObject metadata = new JSONObject(fetch(endpoint, "Mozilla/5.0", trace));
+                String ownerId = metadata.optString("author_id", "");
+                if (profile.equals(metadata.optString("author_name")) && ownerId.matches("[0-9]{1,24}") &&
+                    (postId + "_" + ownerId).equals(metadata.optString("media_id"))) {
+                    accountId = ownerId;
+                    caption = metadata.optString("title", "");
+                    trace(trace, "instagram.oembed", "matched=true caption_chars=" + caption.length());
+                } else {
+                    trace(trace, "instagram.oembed", "matched=false");
+                }
+            } catch (Exception error) {
+                trace(trace, "instagram.oembed", "available=false " + error.getClass().getSimpleName());
+            }
+            if (accountId.isEmpty()) {
+                String profileHtml = fetch("https://www.instagram.com/" + profile + "/", "Mozilla/5.0", trace);
+                if (!profileHtml.contains("\"username\":\"" + profile + "\""))
+                    throw new Exception("Instagram did not confirm the photo owner");
+                Matcher ownerId = Pattern.compile("\"profile_id\":\"([0-9]{1,24})\"").matcher(profileHtml);
+                if (!ownerId.find()) throw new Exception("Instagram did not expose the photo owner ID");
+                accountId = ownerId.group(1);
+            }
+            result = parseSinglePhoto(html, accountId, caption, canonical, code);
         } else {
             throw new Exception("Instagram did not expose public media details for this Reel");
         }
@@ -250,15 +277,11 @@ final class InstagramResolver {
         return null;
     }
 
-    private static StreamResolver.Result parseSinglePhoto(String html, String profileHtml,
+    private static StreamResolver.Result parseSinglePhoto(String html, String accountId, String caption,
             String canonical, String code) throws Exception {
         String postId = idFromShortcode(code);
         String profile = singlePhotoProfile(html, code);
         if (profile == null) throw new Exception("Instagram did not expose this post's main photo");
-        if (!profileHtml.contains("\"username\":\"" + profile + "\""))
-            throw new Exception("Instagram did not confirm the photo owner");
-        Matcher ownerId = Pattern.compile("\"profile_id\":\"([0-9]{1,24})\"").matcher(profileHtml);
-        if (!ownerId.find()) throw new Exception("Instagram did not expose the photo owner ID");
         List<String> urls = new ArrayList<>();
         Set<String> unique = new LinkedHashSet<>();
         Matcher images = Pattern.compile("<img\\b[^>]*>", Pattern.CASE_INSENSITIVE).matcher(html);
@@ -284,8 +307,8 @@ final class InstagramResolver {
             throw new Exception("Instagram post ID has an invalid publish time");
         List<StreamResolver.PhotoCandidate> photos = new ArrayList<>();
         photos.add(new StreamResolver.PhotoCandidate(1, 0, 0, urls));
-        return new StreamResolver.Result(profile, ownerId.group(1), postId, urls.get(0), canonical,
-            PostText.from("", "", Collections.emptyList()), published / 1000,
+        return new StreamResolver.Result(profile, accountId, postId, urls.get(0), canonical,
+            PostText.from("", caption, Collections.emptyList()), published / 1000,
             new ArrayList<>(), photos, new CookieManager(null, CookiePolicy.ACCEPT_NONE), "instagram");
     }
 
