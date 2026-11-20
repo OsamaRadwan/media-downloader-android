@@ -39,7 +39,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private String sourceApp = TIKTOK;
     private OverlayPlacement placement = OverlayPlacement.TIKTOK;
     private Rect landscapeVideoBounds;
-    private boolean returnToTikTokLandscape;
+    private boolean landscapeCapture;
     private final Runnable visibilityCheck = this::syncVisibility;
 
     @Override protected void onServiceConnected() {
@@ -242,14 +242,17 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             (root == null || root.getPackageName() == null ? "unavailable" : root.getPackageName()));
         String app = root == null || root.getPackageName() == null ? "" : root.getPackageName().toString();
         if (TIKTOK.equals(app) && isLandscape(root)) {
-            collecting = true;
-            returnToTikTokLandscape = true;
-            if (!performGlobalAction(GLOBAL_ACTION_BACK)) {
-                failCollecting(new Exception("Could not return to the current TikTok video"));
+            if (findNodeById(root, ":id/player_view") == null) {
+                Toast.makeText(this, "Open a video first", Toast.LENGTH_SHORT).show();
                 return;
             }
-            DiagnosticsStore.trace(this, "overlay.landscape", "Returning to current post share control");
-            handler.postDelayed(() -> clickLandscapeTikTokShare(System.currentTimeMillis() + 5000), 250);
+            Rect screen = new Rect();
+            root.getBoundsInScreen(screen);
+            collecting = true;
+            landscapeCapture = true;
+            DiagnosticsStore.trace(this, "overlay.landscape", "Opening share in the full-screen player");
+            tapTikTokLandscapeShare(screen.right - OverlaySettings.dp(this, 68),
+                screen.top + OverlaySettings.dp(this, 36), 0, System.currentTimeMillis() + 5000);
             return;
         }
         AccessibilityNodeInfo share = null;
@@ -291,22 +294,40 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         return share;
     }
 
-    private void clickLandscapeTikTokShare(long deadline) {
-        AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root != null && TIKTOK.equals(String.valueOf(root.getPackageName())) && !isLandscape(root) &&
-            find(root, "Full screen") != null) {
-            AccessibilityNodeInfo action = clickableAncestor(findTikTokShare(root));
-            if (action != null && action.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                DiagnosticsStore.trace(this, "overlay.landscape", "Current portrait post share activated");
-                handler.postDelayed(() -> clickCopyWhenReady(TIKTOK, System.currentTimeMillis() + 4000), 600);
-                return;
-            }
-        }
-        if (System.currentTimeMillis() < deadline) {
-            handler.postDelayed(() -> clickLandscapeTikTokShare(deadline), 200);
+    private void tapTikTokLandscapeShare(int x, int y, int taps, long deadline) {
+        if (!collecting || !landscapeCapture) return;
+        if (findActionInWindows("Copy link") != null) {
+            DiagnosticsStore.trace(this, "overlay.landscape", "Share sheet opened without leaving full screen");
+            handler.postDelayed(() -> clickCopyWhenReady(TIKTOK, System.currentTimeMillis() + 4000), 150);
             return;
         }
-        failCollecting(new Exception("Could not find the current TikTok video's share control"));
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null || !TIKTOK.equals(String.valueOf(root.getPackageName())) || !isLandscape(root)) {
+            failCollecting(new Exception("TikTok full-screen video changed before sharing"));
+            return;
+        }
+        if (taps == 2) {
+            if (System.currentTimeMillis() < deadline) {
+                handler.postDelayed(() -> tapTikTokLandscapeShare(x, y, taps, deadline), 200);
+                return;
+            }
+            failCollecting(new Exception("Could not open TikTok's full-screen share menu"));
+            return;
+        }
+        Path path = new Path();
+        path.moveTo(x, y);
+        android.accessibilityservice.GestureDescription gesture =
+            new android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 70))
+                .build();
+        if (!dispatchGesture(gesture, new GestureResultCallback() {
+            @Override public void onCompleted(android.accessibilityservice.GestureDescription ignored) {
+                handler.postDelayed(() -> tapTikTokLandscapeShare(x, y, taps + 1, deadline), 400);
+            }
+            @Override public void onCancelled(android.accessibilityservice.GestureDescription ignored) {
+                failCollecting(new Exception("Could not tap TikTok's full-screen share control"));
+            }
+        }, handler)) failCollecting(new Exception("Could not send the share tap"));
     }
 
     private void clickCopyWhenReady(String app, long deadline) {
@@ -394,10 +415,8 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             intent.putExtra("shareUrl", shareUrl);
             startForegroundService(intent);
             boolean shareSheetOpen = findActionInWindows("Copy link") != null;
-            boolean restoreLandscape = returnToTikTokLandscape;
             finishCollecting();
             if (shareSheetOpen) performGlobalAction(GLOBAL_ACTION_BACK);
-            if (restoreLandscape) handler.postDelayed(() -> restoreTikTokLandscape(System.currentTimeMillis() + 3000), 450);
         } catch (Exception error) { failCollecting(error); }
     }
 
@@ -405,12 +424,9 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         DiagnosticsStore.record(this, "overlay.start_download", error);
         Log.e("MediaDownloader", "Could not start download", error);
         Toast.makeText(this, "Could not start download: " + error.getMessage(), Toast.LENGTH_LONG).show();
-        boolean restoreLandscape = returnToTikTokLandscape;
+        boolean closeLandscapeShare = landscapeCapture && findActionInWindows("Copy link") != null;
         finishCollecting();
-        if (restoreLandscape) {
-            if (findActionInWindows("Copy link") != null) performGlobalAction(GLOBAL_ACTION_BACK);
-            handler.postDelayed(() -> restoreTikTokLandscape(System.currentTimeMillis() + 3000), 450);
-        }
+        if (closeLandscapeShare) performGlobalAction(GLOBAL_ACTION_BACK);
     }
 
     private void finishCollecting() {
@@ -420,21 +436,8 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             overlay.setFocusableInTouchMode(false);
         }
         collecting = false;
-        returnToTikTokLandscape = false;
+        landscapeCapture = false;
         scheduleVisibilityCheck();
-    }
-
-    private void restoreTikTokLandscape(long deadline) {
-        AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root == null || !TIKTOK.equals(String.valueOf(root.getPackageName()))) return;
-        if (isLandscape(root)) return;
-        AccessibilityNodeInfo fullScreen = clickableAncestor(find(root, "Full screen"));
-        if (fullScreen != null && fullScreen.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            DiagnosticsStore.trace(this, "overlay.landscape", "Returned to full-screen post");
-            return;
-        }
-        if (System.currentTimeMillis() < deadline)
-            handler.postDelayed(() -> restoreTikTokLandscape(deadline), 200);
     }
 
     private AccessibilityNodeInfo find(AccessibilityNodeInfo root, String needle) {
