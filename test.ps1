@@ -14,6 +14,7 @@ $sources = @(
     'src\com\codex\mediadownloader\OverlayOption.java',
     'src\com\codex\mediadownloader\Mp4SourceMetadata.java',
     'src\com\codex\mediadownloader\SourcePostUrl.java',
+    'src\com\codex\mediadownloader\RedNoteVideoPolicy.java',
     'src\com\codex\mediadownloader\PostText.java',
     'src\com\codex\mediadownloader\PhotoQuality.java',
     'src\com\codex\mediadownloader\DiagnosticsFormat.java',
@@ -30,6 +31,7 @@ $sources = @(
     'tests\com\codex\mediadownloader\DiagnosticsFilePrunerTest.java'
     'tests\com\codex\mediadownloader\DiagnosticsDailyLogTest.java'
     'tests\com\codex\mediadownloader\MediaRequestCookiesTest.java'
+    'tests\com\codex\mediadownloader\RedNoteVideoPolicyTest.java'
 ) | ForEach-Object { Join-Path $project $_ }
 $androidJar = 'D:\Random\AndroidSdk\platforms\android-35\android.jar'
 & javac -encoding UTF-8 --release 8 -cp $androidJar -d $target @sources
@@ -50,3 +52,5 @@ if ($LASTEXITCODE -ne 0) { throw 'Diagnostic file pruning tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Diagnostic daily log tests failed' }
 & java -cp $target com.codex.mediadownloader.MediaRequestCookiesTest
 if ($LASTEXITCODE -ne 0) { throw 'Media request cookie tests failed' }
+& java -cp $target com.codex.mediadownloader.RedNoteVideoPolicyTest
+if ($LASTEXITCODE -ne 0) { throw 'RedNote video policy tests failed' }

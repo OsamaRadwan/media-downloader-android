@@ -249,7 +249,9 @@ public class DownloadService extends Service {
                         "x" + candidate.height + " " + (candidate.variant.equals("default") ? "default" : "bitrate"));
                     Exception accessError = null;
                     try {
-                        fetch(candidate.url, result.pageUrl, result.cookies, 0, false, video,
+                        int publicProfile = "rednote".equals(result.platform) &&
+                            "origin".equals(candidate.variant) ? 2 : 0;
+                        fetch(candidate.url, result.pageUrl, result.cookies, publicProfile, false, video,
                             "Downloading stream • option " + option, jobId, title, fileName,
                             candidate.width, candidate.height, entry);
                         Log.i("MediaDownloader", "Stream option " + option + " downloaded without visitor cookies");

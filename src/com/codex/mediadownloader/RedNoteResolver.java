@@ -91,6 +91,41 @@ final class RedNoteResolver {
         List<StreamResolver.Candidate> videos = new ArrayList<>();
         JSONObject video = note.optJSONObject("video");
         if ("video".equals(note.optString("type")) || video != null) {
+            JSONObject consumer = video == null ? null : video.optJSONObject("consumer");
+            String originalKey = consumer == null ? "" : consumer.optString("originVideoKey",
+                consumer.optString("origin_video_key", ""));
+            String originalUrl = RedNoteVideoPolicy.originalUrl(originalKey);
+            if (isMedia(originalUrl)) videos.add(new StreamResolver.Candidate(originalUrl, 0, 0, 0, "origin"));
+            JSONObject mediaV2 = video == null ? null : video.optJSONObject("mediaV2");
+            if (mediaV2 == null && video != null) {
+                String mediaV2Text = video.optString("mediaV2", "");
+                if (mediaV2Text.startsWith("{") && mediaV2Text.length() < 1_000_000)
+                    try { mediaV2 = new JSONObject(mediaV2Text); } catch (Exception ignored) { }
+            }
+            JSONObject videoV2 = mediaV2 == null ? null : mediaV2.optJSONObject("video");
+            JSONObject opaque = videoV2 == null ? null : videoV2.optJSONObject("opaque1");
+            if (opaque != null) {
+                for (String field : new String[]{"hd_screencast_stream", "default_screencast_stream"}) {
+                    JSONArray renditions = opaque.optJSONArray(field);
+                    if (renditions == null) {
+                        JSONObject single = opaque.optJSONObject(field);
+                        if (single != null) {
+                            renditions = new JSONArray();
+                            renditions.put(single);
+                        }
+                    }
+                    if (renditions == null) continue;
+                    for (int i = 0; i < renditions.length() && i < 16; i++) {
+                        JSONObject rendition = renditions.optJSONObject(i);
+                        if (rendition == null) continue;
+                        String url = secure(rendition.optString("masterUrl",
+                            rendition.optString("master_url", "")));
+                        if (!isMedia(url) || !RedNoteVideoPolicy.cleanScreencast(url)) continue;
+                        videos.add(new StreamResolver.Candidate(url, rendition.optInt("width", 0),
+                            rendition.optInt("height", 0), rendition.optInt("videoBitrate", 0), field + "-" + i));
+                    }
+                }
+            }
             JSONObject media = video == null ? null : video.optJSONObject("media");
             JSONObject streams = media == null ? null : media.optJSONObject("stream");
             if (streams != null) for (String codec : new String[]{"h264", "h265", "h266", "av1"}) {
@@ -100,13 +135,29 @@ final class RedNoteResolver {
                     JSONObject version = versions.optJSONObject(i);
                     if (version == null) continue;
                     String url = secure(version.optString("masterUrl", ""));
-                    if (!isMedia(url)) continue;
+                    if (!isMedia(url) || !RedNoteVideoPolicy.cleanStream(version.optInt("streamType", -1), url)) continue;
                     videos.add(new StreamResolver.Candidate(url, version.optInt("width", 0),
                         version.optInt("height", 0), version.optInt("videoBitrate", 0), codec + "-" + i));
                 }
             }
-            if (videos.isEmpty()) throw new Exception("RedNote did not list a public video stream");
-            Collections.sort(videos, (a, b) -> {
+            JSONObject streamsV2 = mediaV2 == null ? null : mediaV2.optJSONObject("stream");
+            if (streamsV2 != null) for (String codec : new String[]{"h264", "h265", "h266", "av1"}) {
+                JSONArray versions = streamsV2.optJSONArray(codec);
+                if (versions == null) continue;
+                for (int i = 0; i < versions.length() && i < 32; i++) {
+                    JSONObject version = versions.optJSONObject(i);
+                    if (version == null) continue;
+                    String url = secure(version.optString("master_url", version.optString("masterUrl", "")));
+                    int type = version.optInt("stream_type", version.optInt("streamType", -1));
+                    if (!isMedia(url) || !RedNoteVideoPolicy.cleanStream(type, url)) continue;
+                    videos.add(new StreamResolver.Candidate(url, version.optInt("width", 0),
+                        version.optInt("height", 0), version.optInt("video_bitrate",
+                            version.optInt("videoBitrate", 0)), "v2-" + codec + "-" + i));
+                }
+            }
+            if (videos.isEmpty()) throw new Exception("RedNote did not expose a watermark-free public video stream");
+            int fixedFirst = "origin".equals(videos.get(0).variant) ? 1 : 0;
+            Collections.sort(videos.subList(fixedFirst, videos.size()), (a, b) -> {
                 int pixels = Long.compare((long) b.width * b.height, (long) a.width * a.height);
                 if (pixels != 0) return pixels;
                 int bitrate = Integer.compare(b.bitrate, a.bitrate);
