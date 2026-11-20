@@ -125,7 +125,7 @@ public class DownloadService extends Service {
             entry.accountId = result.accountId;
             entry.videoId = result.videoId;
             entry.publishTimeSeconds = result.publishTimeSeconds;
-            entry.sourceUrl = result.pageUrl;
+            entry.sourceUrl = SourcePostUrl.forMetadata(result.pageUrl);
             entry.postTitle = result.postText.title;
             entry.caption = result.postText.description;
             entry.hashtags = result.postText.hashtags;

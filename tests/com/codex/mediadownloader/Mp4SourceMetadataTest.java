@@ -12,6 +12,7 @@ public final class Mp4SourceMetadataTest {
     private static final String INSTAGRAM_URL = "https://www.instagram.com/reel/Df0DoVpmTBI/";
     private static final String STORY_URL = "https://www.instagram.com/stories/nasa/4034039760237270159/";
     private static final String REDNOTE_URL = "https://www.rednote.com/discovery/item/6ae306f60000000007038cbf";
+    private static final String SECRET = "PRIVATE_TOKEN_SHOULD_NOT_APPEAR";
 
     public static void main(String[] args) throws Exception {
         PostText post = PostText.from("", "Sunset ride #travel #مساء #travel", Arrays.asList("fyp", "travel"));
@@ -36,6 +37,34 @@ public final class Mp4SourceMetadataTest {
             check(Mp4SourceMetadata.contains(sample, STORY_URL), "Story MP4 must contain its own source URL");
             Mp4SourceMetadata.write(sample, REDNOTE_URL, post);
             check(Mp4SourceMetadata.contains(sample, REDNOTE_URL), "RedNote MP4 must contain its source URL");
+            String[] cleanUrls = {URL, INSTAGRAM_URL, STORY_URL, REDNOTE_URL,
+                "https://www.tiktok.com/@creator/photo/7708810139658128647",
+                "https://www.instagram.com/p/Df0DoVpmTBI/"};
+            for (String cleanUrl : cleanUrls) {
+                String sharedUrl = cleanUrl + "?igsh=" + SECRET + "#" + SECRET;
+                check(SourcePostUrl.forMetadata(sharedUrl).equals(cleanUrl),
+                    "Public permalink must drop every share parameter and fragment");
+                Mp4SourceMetadata.write(sample, sharedUrl, post);
+                check(Mp4SourceMetadata.containsTag(sample, "\u00a9cmt", cleanUrl, false),
+                    "MP4 Comment must contain only the clean permalink");
+                check(!new String(Files.readAllBytes(sample.toPath()), "ISO-8859-1").contains(SECRET),
+                    "MP4 must not include a share token in any bytes");
+            }
+            check(SourcePostUrl.forMetadata("https://xiaohongshu.com/explore/6AE306F60000000007038CBF?x=" + SECRET)
+                .equals(REDNOTE_URL), "RedNote alternate public path must normalize");
+            String[] rejected = {"https://instagram.com.evil.example/p/Df0DoVpmTBI/?x=" + SECRET,
+                "https://user:password@www.instagram.com/p/Df0DoVpmTBI/",
+                "http://www.instagram.com/p/Df0DoVpmTBI/",
+                "https://www.instagram.com:443/p/Df0DoVpmTBI/",
+                "https://www.instagram.com/p/%44f0DoVpmTBI/"};
+            for (String badUrl : rejected) {
+                try {
+                    SourcePostUrl.forMetadata(badUrl);
+                    throw new AssertionError("Unsafe post link was accepted");
+                } catch (java.io.IOException expected) {
+                    check(!expected.getMessage().contains(SECRET), "Rejected URL must not reach diagnostics");
+                }
+            }
             check(Mp4SourceMetadata.containsTag(sample, "\u00a9key", post.hashtags, false), "MP4 keyword tag");
             try (RandomAccessFile media = new RandomAccessFile(sample, "r")) {
                 media.seek(12 + 4);

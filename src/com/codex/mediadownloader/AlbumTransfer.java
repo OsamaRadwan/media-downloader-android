@@ -243,7 +243,7 @@ final class AlbumTransfer {
             String description = result.postText.description;
             if (!description.isEmpty()) exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, description);
             exif.setAttribute(ExifInterface.TAG_ARTIST, result.profileName);
-            exif.setAttribute(ExifInterface.TAG_USER_COMMENT, result.pageUrl +
+            exif.setAttribute(ExifInterface.TAG_USER_COMMENT, SourcePostUrl.forMetadata(result.pageUrl) +
                 (result.postText.title.isEmpty() ? "" : "\n" + result.postText.title) +
                 (result.postText.hashtags.isEmpty() ? "" : "\n" + result.postText.hashtags));
             exif.saveAttributes();

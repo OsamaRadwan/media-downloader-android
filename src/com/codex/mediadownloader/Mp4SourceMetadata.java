@@ -22,11 +22,7 @@ final class Mp4SourceMetadata {
     }
 
     static void write(File file, String sourceUrl, PostText postText) throws IOException {
-        if (sourceUrl == null || !(sourceUrl.matches("https://www\\.tiktok\\.com/@[A-Za-z0-9._-]+/video/[0-9]{15,22}") ||
-            sourceUrl.matches("https://www\\.instagram\\.com/(p|reel|tv)/[A-Za-z0-9_-]{5,20}/") ||
-            sourceUrl.matches("https://www\\.instagram\\.com/stories/[A-Za-z0-9._]{1,40}/[0-9]{15,22}/") ||
-            sourceUrl.matches("https://www\\.rednote\\.com/discovery/item/[a-fA-F0-9]{24}")))
-            throw new IOException("Invalid source post URL");
+        sourceUrl = SourcePostUrl.forMetadata(sourceUrl);
         if (postText == null) throw new IOException("Post metadata missing");
         try (RandomAccessFile media = new RandomAccessFile(file, "rw")) {
             long originalLength = media.length();
@@ -126,7 +122,7 @@ final class Mp4SourceMetadata {
                 changedMeta = append(metaBytes, box("ilst", items));
             } else {
                 byte[] ilstBytes = Arrays.copyOfRange(metaBytes, ilst.offset, ilst.end());
-                ilstBytes = putText(ilstBytes, COMMENT, url, true);
+                ilstBytes = putText(ilstBytes, COMMENT, url, false);
                 ilstBytes = putText(ilstBytes, TITLE, postText.title, false);
                 ilstBytes = putText(ilstBytes, DESCRIPTION, postText.description, false);
                 ilstBytes = putText(ilstBytes, KEYWORDS, postText.hashtags, false);
