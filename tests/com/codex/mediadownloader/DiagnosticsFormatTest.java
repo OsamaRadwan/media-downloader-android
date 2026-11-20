@@ -25,6 +25,12 @@ public final class DiagnosticsFormatTest {
         check(DiagnosticsFormat.publicPostUrl("https://www.instagram.com/stories/nasa/4034039760237270159/?utm_source=private")
             .equals("https://www.instagram.com/stories/nasa/4034039760237270159/"),
             "Story links must retain the item ID and omit tracking queries");
+        check(DiagnosticsFormat.publicPostUrl("https://www.rednote.com/discovery/item/6ae306f60000000007038cbf?xsec_token=private")
+            .equals("https://www.rednote.com/discovery/item/6ae306f60000000007038cbf"),
+            "RedNote diagnostics must omit share tokens");
+        check(DiagnosticsFormat.publicPostUrl("https://xhslink.cn/o/6lqrKemnx7F?track=private")
+            .equals("https://xhslink.cn/o/6lqrKemnx7F"),
+            "RedNote short links retain the post route without tracking");
         check(DiagnosticsFormat.publicPostUrl("https://evil.example/video/123").equals("unavailable"),
             "Untrusted source links must not enter diagnostic reports");
         System.out.println("DiagnosticsFormatTest passed");

@@ -111,6 +111,8 @@ final class AlbumTransfer {
                 } else optionFile.delete();
             } catch (Exception error) {
                 lastError = error;
+                Log.w("MediaDownloader", "Photo candidate host=" + new URL(url).getHost() +
+                    " failed: " + error.getMessage());
                 if ("tiktok".equals(result.platform) && MediaRequestCookies.retryWithVisitorCookies(error)) {
                     visitorFallbacks.add(url);
                     DiagnosticsStore.record(context, "album.public job=" + entry.id + " index=" + candidate.index, error);
@@ -136,10 +138,10 @@ final class AlbumTransfer {
             }
         }
         if (best == null) throw new Exception(lastError == null ? "No image URL worked" : lastError.getMessage());
-        if ("instagram".equals(result.platform) && listedPixels > 0 &&
+        if (("instagram".equals(result.platform) || "rednote".equals(result.platform)) && listedPixels > 0 &&
             (long) best.width * best.height < listedPixels) {
             selected.delete();
-            throw new Exception("Instagram exposed only a photo below its listed resolution");
+            throw new Exception("The public page exposed only a photo below its listed resolution");
         }
         DiagnosticsStore.trace(context, "album.selected", "job=" + entry.id + " index=" + candidate.index +
             " listed=" + candidate.width + "x" + candidate.height +
@@ -163,8 +165,11 @@ final class AlbumTransfer {
             connection.setReadTimeout(30000);
             connection.setInstanceFollowRedirects(true);
             connection.setRequestProperty("User-Agent", StreamResolver.USER_AGENT);
-            connection.setRequestProperty("Referer", result.pageUrl);
-            connection.setRequestProperty("Accept", "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8");
+            // RedNote's public original-image CDN rejects a post Referer even though
+            // the same file is available anonymously without one.
+            if (!("rednote".equals(result.platform) && new URL(url).getHost().endsWith(".xhscdn.com")))
+                connection.setRequestProperty("Referer", result.pageUrl);
+            connection.setRequestProperty("Accept", "image/heic,image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8");
             MediaRequestCookies.attach(connection, result.cookies, visitorCookies);
             long requestStarted = SystemClock.elapsedRealtime();
             DiagnosticsStore.trace(context, "album.request", "job=" + entry.id + " index=" + candidate.index +
@@ -213,6 +218,10 @@ final class AlbumTransfer {
             } else if (head[0] == 'R' && head[1] == 'I' && head[2] == 'F' && head[3] == 'F' &&
                        head[8] == 'W' && head[9] == 'E' && head[10] == 'B' && head[11] == 'P') {
                 mime = "image/webp"; extension = "webp";
+            } else if (head[4] == 'f' && head[5] == 't' && head[6] == 'y' && head[7] == 'p' &&
+                       head[8] == 'h' && head[9] == 'e' && head[10] == 'i' &&
+                       (head[11] == 'c' || head[11] == 'x')) {
+                mime = "image/heic"; extension = "heic";
             } else throw new Exception("Image server returned an unsupported file");
             BitmapFactory.Options bounds = new BitmapFactory.Options();
             bounds.inJustDecodeBounds = true;
@@ -221,6 +230,9 @@ final class AlbumTransfer {
             DiagnosticsStore.trace(context, "album.received", "job=" + entry.id + " index=" + candidate.index +
                 " bytes=" + written + " actual=" + bounds.outWidth + "x" + bounds.outHeight +
                 " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStarted));
+            Log.i("MediaDownloader", "Photo candidate " + candidate.index + " from " +
+                connection.getURL().getHost() + " " + bounds.outWidth + "x" + bounds.outHeight +
+                " mime=" + mime);
             return new PhotoFile(mime, extension, bounds.outWidth, bounds.outHeight);
         } finally { connection.disconnect(); }
     }

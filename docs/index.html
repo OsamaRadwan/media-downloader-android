@@ -56,15 +56,20 @@
     <main>
       <p class="eyebrow">Android app · versioned builds</p>
       <h1>Download media.<br>Keep the details.</h1>
-      <p class="intro">A configurable floating download control for TikTok and Instagram videos and photos, with progress, file details, and a local download history. Availability depends on each source's public media response.</p>
+      <p class="intro">A configurable floating download control for TikTok, Instagram, and RedNote videos and photos, with progress, file details, and a local download history. Availability depends on each source's public media response.</p>
       <div class="hero-actions">
-        <a class="button" id="latest-download" href="https://github.com/OsamaRadwan/media-downloader-android/releases/download/v1.56/MediaDownloader-v1.56.apk">Get latest version <span aria-hidden="true">↓</span></a>
+        <a class="button" id="latest-download" href="https://github.com/OsamaRadwan/media-downloader-android/releases/download/v1.57/MediaDownloader-v1.57.apk">Get latest version <span aria-hidden="true">↓</span></a>
         <a class="button secondary" href="https://github.com/OsamaRadwan/media-downloader-android">View source</a>
       </div>
       <p class="note">Android 10 or newer · APK installation · Accessibility and overlay access required for the floating control</p>
       <section id="releases" aria-labelledby="releases-heading">
         <div class="section-head"><h2 id="releases-heading">All published versions</h2><p>APK and notes for each release</p></div>
         <div class="releases" id="release-list" aria-live="polite">
+          <article class="release">
+            <div class="release-top"><div><span class="version">v1.57</span><span class="prerelease">Prerelease</span><h3>Media Downloader v1.57</h3></div><time datetime="2026-11-20">20 November 2026</time></div>
+            <p class="summary">Added RedNote videos and photo albums with post links, separate button placement, and tested full-size public HEIC originals.</p>
+            <div class="links"><a class="button" href="https://github.com/OsamaRadwan/media-downloader-android/releases/download/v1.57/MediaDownloader-v1.57.apk">Download APK ↓</a><a href="https://github.com/OsamaRadwan/media-downloader-android/releases/tag/v1.57">Release notes</a><a href="https://github.com/OsamaRadwan/media-downloader-android/archive/refs/tags/v1.57.zip">Source ZIP</a></div>
+          </article>
           <article class="release">
             <div class="release-top"><div><span class="version">v1.56</span><span class="prerelease">Prerelease</span><h3>Media Downloader v1.56</h3></div><time datetime="2026-11-20">20 November 2026</time></div>
             <p class="summary">Tested Instagram photo captions and hashtags in the Downloads card and saved JPEG metadata. Story saving remains experimental.</p>
@@ -139,7 +144,7 @@
           if (newestWithApk) latestDownload.href = newestWithApk.assets.find(asset => asset.name.toLowerCase().endsWith('.apk')).browser_download_url;
         }
       } catch (error) {
-        // Keep the verified v1.56 link visible when the GitHub API is unavailable.
+        // Keep the verified v1.57 link visible when the GitHub API is unavailable.
       }
     }
     loadReleases();

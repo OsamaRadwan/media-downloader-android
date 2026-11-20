@@ -6,7 +6,11 @@ enum OverlayPlacement {
     INSTAGRAM_FEED(OverlayOption.INSTAGRAM_FEED_SIDE, OverlayOption.INSTAGRAM_FEED_HEIGHT,
         OverlayOption.INSTAGRAM_FEED_GAP),
     INSTAGRAM_REEL(OverlayOption.INSTAGRAM_REEL_SIDE, OverlayOption.INSTAGRAM_REEL_HEIGHT,
-        OverlayOption.INSTAGRAM_REEL_GAP);
+        OverlayOption.INSTAGRAM_REEL_GAP),
+    REDNOTE_PHOTO(OverlayOption.REDNOTE_PHOTO_SIDE, OverlayOption.REDNOTE_PHOTO_HEIGHT,
+        OverlayOption.REDNOTE_PHOTO_GAP),
+    REDNOTE_VIDEO(OverlayOption.REDNOTE_VIDEO_SIDE, OverlayOption.REDNOTE_VIDEO_HEIGHT,
+        OverlayOption.REDNOTE_VIDEO_GAP);
 
     final OverlayOption side, height, gap;
     OverlayPlacement(OverlayOption side, OverlayOption height, OverlayOption gap) {

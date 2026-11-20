@@ -94,6 +94,8 @@ final class DownloadItem {
     }
 
     String postUrl() {
+        if (isRedNoteUrl(sourceUrl)) return sourceUrl;
+        if (isRedNoteUrl(shareUrl)) return shareUrl;
         if (isInstagramUrl(sourceUrl)) return sourceUrl;
         if (isInstagramUrl(shareUrl)) return shareUrl;
         return tiktokUrl();
@@ -101,6 +103,24 @@ final class DownloadItem {
 
     boolean fromInstagram() {
         return isInstagramUrl(sourceUrl) || isInstagramUrl(shareUrl);
+    }
+
+    boolean fromRedNote() {
+        return isRedNoteUrl(sourceUrl) || isRedNoteUrl(shareUrl);
+    }
+
+    private static boolean isRedNoteUrl(String value) {
+        try {
+            URI uri = new URI(value);
+            String host = uri.getHost();
+            if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null || uri.getPort() != -1) return false;
+            host = host.toLowerCase(java.util.Locale.ROOT);
+            if (host.equals("xhslink.cn") || host.equals("www.xhslink.cn"))
+                return uri.getPath().matches("/o/[A-Za-z0-9]{6,32}");
+            return (host.equals("rednote.com") || host.equals("www.rednote.com") ||
+                host.equals("xiaohongshu.com") || host.equals("www.xiaohongshu.com")) &&
+                uri.getPath().matches("/(discovery/item|explore)/[a-fA-F0-9]{24}/?");
+        } catch (Exception ignored) { return false; }
     }
 
     private static boolean isInstagramUrl(String value) {

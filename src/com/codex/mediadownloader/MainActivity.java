@@ -261,7 +261,8 @@ public class MainActivity extends Activity {
         section(page, "Live placement preview");
         RadioGroup placementPreview = new RadioGroup(this);
         placementPreview.setOrientation(RadioGroup.VERTICAL);
-        String[] placementNames = {"TikTok", "Instagram feed posts", "Instagram Reels"};
+        String[] placementNames = {"TikTok", "Instagram feed posts", "Instagram Reels",
+            "RedNote photo posts", "RedNote videos"};
         OverlayPlacement[] placements = OverlayPlacement.values();
         for (int i = 0; i < placementNames.length; i++) {
             RadioButton radio = new RadioButton(this);
@@ -300,6 +301,18 @@ public class MainActivity extends Activity {
         slider(page, "Vertical position", OverlayOption.INSTAGRAM_REEL_HEIGHT, "%");
         slider(page, "Distance from border", OverlayOption.INSTAGRAM_REEL_GAP, " dp");
 
+        section(page, "RedNote photo placement");
+        addText(page, "Screen side", 15, TEXT, true, 12);
+        radioGroup(page, new String[]{"Left", "Right"}, OverlayOption.REDNOTE_PHOTO_SIDE);
+        slider(page, "Vertical position", OverlayOption.REDNOTE_PHOTO_HEIGHT, "%");
+        slider(page, "Distance from border", OverlayOption.REDNOTE_PHOTO_GAP, " dp");
+
+        section(page, "RedNote video placement");
+        addText(page, "Screen side", 15, TEXT, true, 12);
+        radioGroup(page, new String[]{"Left", "Right"}, OverlayOption.REDNOTE_VIDEO_SIDE);
+        slider(page, "Vertical position", OverlayOption.REDNOTE_VIDEO_HEIGHT, "%");
+        slider(page, "Distance from border", OverlayOption.REDNOTE_VIDEO_GAP, " dp");
+
         section(page, "Arrow and touch area");
         addText(page, "Icon style (transparent image)", 15, TEXT, true, 12);
         radioGroup(page, new String[]{"Solid", "Outline", "Simple", "Tray"}, OverlayOption.ICON_STYLE);
@@ -319,7 +332,7 @@ public class MainActivity extends Activity {
         slider(page, "Background opacity", OverlayOption.BACKGROUND_OPACITY, "%");
 
         section(page, "App access");
-        addText(page, "The arrow appears over TikTok and Instagram. Allow these permissions for downloads and progress notifications.", 13, MUTED, false, 7);
+        addText(page, "The arrow appears over TikTok, Instagram, and RedNote posts. Allow these permissions for downloads and progress notifications.", 13, MUTED, false, 7);
         overlayStatus = addText(page, "", 13, MUTED, false, 12);
         button(page, "Display over other apps", () -> startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
             Uri.parse("package:" + getPackageName()))));

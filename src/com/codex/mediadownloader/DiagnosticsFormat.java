@@ -59,7 +59,12 @@ final class DiagnosticsFormat {
             boolean instagram = (domain.equals("instagram.com") || domain.equals("www.instagram.com")) &&
                 (path.matches("/(p|reel|tv)/[A-Za-z0-9_-]{5,20}/?") ||
                  path.matches("/stories/[A-Za-z0-9._]{1,40}/[0-9]{15,22}/?"));
-            return tiktok || instagram ? "https://" + domain + path : "unavailable";
+            boolean rednote = ((domain.equals("rednote.com") || domain.equals("www.rednote.com") ||
+                domain.equals("xiaohongshu.com") || domain.equals("www.xiaohongshu.com")) &&
+                path.matches("/(discovery/item|explore)/[a-fA-F0-9]{24}/?")) ||
+                ((domain.equals("xhslink.cn") || domain.equals("www.xhslink.cn")) &&
+                path.matches("/o/[A-Za-z0-9]{6,32}"));
+            return tiktok || instagram || rednote ? "https://" + domain + path : "unavailable";
         } catch (Exception error) { return "unavailable"; }
     }
 }

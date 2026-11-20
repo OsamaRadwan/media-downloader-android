@@ -35,6 +35,11 @@ public final class ArchitectureBoundaryTest {
             "https://vt.tiktok.com/example"), "Shared TikTok link remains available for failed jobs");
         check(item(6, "failed", "", "https://tiktok.com.evil.example/video/123").tiktokUrl().isEmpty(),
             "Untrusted links must not be opened from download history");
+        DownloadItem rednote = item(8, "failed", "", "https://xhslink.cn/o/6lqrKemnx7F");
+        check(rednote.fromRedNote() && rednote.postUrl().equals("https://xhslink.cn/o/6lqrKemnx7F"),
+            "Failed RedNote jobs retain their validated source link");
+        check(!item(9, "failed", "", "https://xhslink.cn.evil.example/o/6lqrKemnx7F").fromRedNote(),
+            "A lookalike RedNote host is rejected");
         DownloadItem album = new DownloadItem(7, 1, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0,
             "partial", "partial", "creator", "", "7706415465383365909", "", "", "", "", "", "", "",
             "album", "", "", "", "", java.util.Collections.emptyList());

@@ -113,7 +113,8 @@ public class DownloadService extends Service {
             StreamResolver.Trace trace = (component, detail) ->
                 DiagnosticsStore.trace(this, component, "job=" + jobId + " " + detail);
             StreamResolver.Result result = InstagramResolver.accepts(shareUrl) ?
-                InstagramResolver.resolve(shareUrl, trace) : StreamResolver.resolve(shareUrl, trace);
+                InstagramResolver.resolve(shareUrl, trace) : RedNoteResolver.accepts(shareUrl) ?
+                RedNoteResolver.resolve(shareUrl, trace) : StreamResolver.resolve(shareUrl, trace);
             if (retry && (!result.isAlbum() || !result.videoId.equals(entry.videoId)))
                 throw new Exception("The shared album no longer matches this job");
             for (HttpCookie cookie : result.cookies.getCookieStore().getCookies())

@@ -252,7 +252,7 @@ final class DownloadsPage {
                 speed.setVisibility(View.GONE);
             }
             StringBuilder metadata = new StringBuilder();
-            if (!entry.videoId.isEmpty()) metadata.append(story ? "Story ID: " : album || entry.fromInstagram() ? "Post ID: " : "Video ID: ").append(entry.videoId).append('\n');
+            if (!entry.videoId.isEmpty()) metadata.append(story ? "Story ID: " : album || entry.fromInstagram() || entry.fromRedNote() ? "Post ID: " : "Video ID: ").append(entry.videoId).append('\n');
             if (!entry.accountId.isEmpty()) metadata.append("Account ID: ").append(entry.accountId).append('\n');
             if (entry.publishTimeSeconds > 0) metadata.append("Published: ").append(date(entry.publishTimeSeconds * 1000L)).append('\n');
             if (entry.width > 0 && entry.height > 0) metadata.append("Resolution: ").append(entry.width).append(" × ").append(entry.height).append('\n');
@@ -269,11 +269,11 @@ final class DownloadsPage {
             error.setVisibility(entry.error.isEmpty() ? View.GONE : View.VISIBLE);
             error.setText(entry.error.isEmpty() ? "" : "Error: " + entry.error);
             String postUrl = entry.postUrl();
-            String appName = entry.fromInstagram() ? "Instagram" : "TikTok";
+            String appName = entry.fromInstagram() ? "Instagram" : entry.fromRedNote() ? "RedNote" : "TikTok";
             tiktokLink.setText("Open in " + appName + " ↗");
             tiktokLink.setContentDescription("Open this post in " + appName);
             tiktokLink.setVisibility(postUrl.isEmpty() ? View.GONE : View.VISIBLE);
-            tiktokLink.setOnClickListener(v -> openPost(postUrl, entry.fromInstagram()));
+            tiktokLink.setOnClickListener(v -> openPost(postUrl, appName));
             if (entry.isActive() && !expanded) expanded = true;
             toggle.setText(expanded ? "Hide details ▲" : "Show details ▼");
             details.setVisibility(expanded ? View.VISIBLE : View.GONE);
@@ -380,12 +380,14 @@ final class DownloadsPage {
         }
     }
 
-    private void openPost(String url, boolean instagram) {
+    private void openPost(String url, String appName) {
         Intent open = new Intent(Intent.ACTION_VIEW, Uri.parse(url))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
-            activity.startActivity(new Intent(open).setPackage(instagram ? "com.instagram.android" : "com.zhiliaoapp.musically"));
-        } catch (ActivityNotFoundException missingTikTok) {
+            String packageName = "Instagram".equals(appName) ? "com.instagram.android" :
+                "RedNote".equals(appName) ? "com.xingin.xhs" : "com.zhiliaoapp.musically";
+            activity.startActivity(new Intent(open).setPackage(packageName));
+        } catch (ActivityNotFoundException missingApp) {
             try { activity.startActivity(open); }
             catch (ActivityNotFoundException missingHandler) {
                 Toast.makeText(activity, "Could not open this post", Toast.LENGTH_LONG).show();

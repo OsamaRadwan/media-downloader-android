@@ -27,6 +27,7 @@ import java.util.List;
 public class OverlayAccessibilityService extends AccessibilityService implements View.OnClickListener {
     private static final String TIKTOK = "com.zhiliaoapp.musically";
     private static final String INSTAGRAM = "com.instagram.android";
+    private static final String REDNOTE = "com.xingin.xhs";
     private final Handler handler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
     private WindowManager.LayoutParams overlayParams;
@@ -100,6 +101,10 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                 OverlayPlacement instagramPlacement = find(root, "Reels") != null && find(root, "Home") == null ?
                     OverlayPlacement.INSTAGRAM_REEL : OverlayPlacement.INSTAGRAM_FEED;
                 showOverlay(INSTAGRAM, instagramPlacement);
+            } else if (REDNOTE.equals(topApp)) {
+                if (find(root, "Say something") == null || findRedNoteShare(root) == null) hideOverlay();
+                else showOverlay(REDNOTE, find(root, "Picture, No.") == null ?
+                    OverlayPlacement.REDNOTE_VIDEO : OverlayPlacement.REDNOTE_PHOTO);
             } else hideOverlay();
             return;
         }
@@ -188,6 +193,8 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             if (share == null) share = find(root, "Share Story");
         } else if (INSTAGRAM.equals(app)) {
             share = findShare(root);
+        } else if (REDNOTE.equals(app)) {
+            share = findRedNoteShare(root);
         }
         AccessibilityNodeInfo action = clickableAncestor(share);
         if (action == null || !action.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
@@ -198,18 +205,26 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         }
         collecting = true;
         DiagnosticsStore.trace(this, "overlay.share", "Share control activated");
-        handler.postDelayed(() -> {
-            AccessibilityNodeInfo copy = findActionInWindows("Copy link");
-            long copyStartedAt = System.currentTimeMillis();
-            if (copy != null && copy.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                startClipboardRead(app, copyStartedAt);
-                return;
-            }
-            if (copy != null && tapCopyControl(copy, app, copyStartedAt)) return;
-            DiagnosticsStore.record(this, "overlay.copy_link", "Copy link action unavailable");
-            finishCollecting();
-            Toast.makeText(this, "Could not find Copy link", Toast.LENGTH_SHORT).show();
-        }, INSTAGRAM.equals(app) ? 1000 : 600);
+        handler.postDelayed(() -> clickCopyWhenReady(app, System.currentTimeMillis() + 4000),
+            INSTAGRAM.equals(app) ? 1000 : 600);
+    }
+
+    private void clickCopyWhenReady(String app, long deadline) {
+        AccessibilityNodeInfo copy = findActionInWindows("Copy link");
+        if (copy == null && REDNOTE.equals(app)) copy = find(getRootInActiveWindow(), "Copy link");
+        long copyStartedAt = System.currentTimeMillis();
+        if (copy != null && copy.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            startClipboardRead(app, copyStartedAt);
+            return;
+        }
+        if (copy != null && tapCopyControl(copy, app, copyStartedAt)) return;
+        if (System.currentTimeMillis() < deadline) {
+            handler.postDelayed(() -> clickCopyWhenReady(app, deadline), 200);
+            return;
+        }
+        DiagnosticsStore.record(this, "overlay.copy_link", "Copy link action unavailable");
+        finishCollecting();
+        Toast.makeText(this, "Could not find Copy link", Toast.LENGTH_SHORT).show();
     }
 
     private boolean tapCopyControl(AccessibilityNodeInfo copy, String app, long startedAt) {
@@ -270,6 +285,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             String shareUrl = match.group().replaceAll("[),.;]+$", "");
             String host = Uri.parse(shareUrl).getHost();
             boolean valid = INSTAGRAM.equals(app) ? InstagramResolver.accepts(shareUrl) :
+                REDNOTE.equals(app) ? RedNoteResolver.accepts(shareUrl) :
                 host != null && (host.equals("tiktok.com") || host.endsWith(".tiktok.com"));
             if (!valid) throw new Exception("Copied link is not a post from the current app");
             Log.i("MediaDownloader", "Fresh post link copied at " + copiedAt);
@@ -331,6 +347,30 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             if (distance < bestDistance) { best = candidate; bestDistance = distance; }
         }
         return best;
+    }
+
+    private AccessibilityNodeInfo findRedNoteShare(AccessibilityNodeInfo root) {
+        AccessibilityNodeInfo labelled = find(root, "分享");
+        if (labelled != null) return labelled;
+        return findRedNoteShareIcon(root);
+    }
+
+    private AccessibilityNodeInfo findRedNoteShareIcon(AccessibilityNodeInfo root) {
+        if (root == null || !root.isVisibleToUser()) return null;
+        if ("android.widget.ImageView".contentEquals(root.getClassName())) {
+            Rect bounds = new Rect();
+            root.getBoundsInScreen(bounds);
+            int width = getResources().getDisplayMetrics().widthPixels;
+            int height = getResources().getDisplayMetrics().heightPixels;
+            if (bounds.left >= width * 8 / 10 && bounds.top < height / 10 &&
+                bounds.width() >= 40 && bounds.width() <= 120 && bounds.height() <= 120)
+                return root;
+        }
+        for (int i = 0; i < root.getChildCount(); i++) {
+            AccessibilityNodeInfo candidate = findRedNoteShareIcon(root.getChild(i));
+            if (candidate != null) return candidate;
+        }
+        return null;
     }
 
     private void collectShare(AccessibilityNodeInfo root, java.util.List<AccessibilityNodeInfo> found) {
