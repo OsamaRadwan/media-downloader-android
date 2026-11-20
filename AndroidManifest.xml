@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.codex.mediadownloader" android:versionCode="53" android:versionName="1.52">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.codex.mediadownloader" android:versionCode="56" android:versionName="1.55">
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -7,7 +7,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <queries><package android:name="com.zhiliaoapp.musically" /></queries>
+    <queries>
+        <package android:name="com.zhiliaoapp.musically" />
+        <package android:name="com.instagram.android" />
+    </queries>
     <application android:name=".MediaDownloaderApplication" android:label="Media Downloader" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

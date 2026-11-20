@@ -9,6 +9,8 @@ import java.util.Arrays;
 
 public final class Mp4SourceMetadataTest {
     private static final String URL = "https://www.tiktok.com/@creator/video/7708810139658128647";
+    private static final String INSTAGRAM_URL = "https://www.instagram.com/reel/Df0DoVpmTBI/";
+    private static final String STORY_URL = "https://www.instagram.com/stories/nasa/4034039760237270159/";
 
     public static void main(String[] args) throws Exception {
         PostText post = PostText.from("", "Sunset ride #travel #مساء #travel", Arrays.asList("fyp", "travel"));
@@ -27,6 +29,10 @@ public final class Mp4SourceMetadataTest {
             check(Mp4SourceMetadata.contains(sample, URL), "MP4 must contain source URL");
             check(Mp4SourceMetadata.containsTag(sample, "\u00a9nam", post.title, false), "MP4 title tag");
             check(Mp4SourceMetadata.containsTag(sample, "desc", post.description, false), "MP4 description tag");
+            Mp4SourceMetadata.write(sample, INSTAGRAM_URL, post);
+            check(Mp4SourceMetadata.contains(sample, INSTAGRAM_URL), "Instagram MP4 must contain source URL");
+            Mp4SourceMetadata.write(sample, STORY_URL, post);
+            check(Mp4SourceMetadata.contains(sample, STORY_URL), "Story MP4 must contain its own source URL");
             check(Mp4SourceMetadata.containsTag(sample, "\u00a9key", post.hashtags, false), "MP4 keyword tag");
             try (RandomAccessFile media = new RandomAccessFile(sample, "r")) {
                 media.seek(12 + 4);

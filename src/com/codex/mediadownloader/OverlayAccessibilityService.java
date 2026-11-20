@@ -7,6 +7,8 @@ import android.content.ClipData;
 import android.content.ClipDescription;
 import android.net.Uri;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
+import android.graphics.Path;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -24,6 +26,7 @@ import java.util.List;
 
 public class OverlayAccessibilityService extends AccessibilityService implements View.OnClickListener {
     private static final String TIKTOK = "com.zhiliaoapp.musically";
+    private static final String INSTAGRAM = "com.instagram.android";
     private final Handler handler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
     private WindowManager.LayoutParams overlayParams;
@@ -31,6 +34,8 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private OverlayPreferences settings;
     private CustomIconStore customIcons;
     private boolean collecting;
+    private String sourceApp = TIKTOK;
+    private OverlayPlacement placement = OverlayPlacement.TIKTOK;
     private final Runnable visibilityCheck = this::syncVisibility;
 
     @Override protected void onServiceConnected() {
@@ -44,7 +49,9 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event == null) return;
         int type = event.getEventType();
-        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && type != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return;
+        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            type != AccessibilityEvent.TYPE_WINDOWS_CHANGED &&
+            type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && type != AccessibilityEvent.TYPE_VIEW_SCROLLED) return;
         if (collecting) return;
         if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             handler.removeCallbacks(visibilityCheck);
@@ -87,8 +94,13 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                 hideOverlay();
                 return;
             }
-            Log.d("MediaDownloader", "Top app: " + topApp);
-            if (TIKTOK.equals(topApp)) showOverlay(); else hideOverlay();
+            if (TIKTOK.equals(topApp)) {
+                showOverlay(TIKTOK, OverlayPlacement.TIKTOK);
+            } else if (INSTAGRAM.equals(topApp)) {
+                OverlayPlacement instagramPlacement = find(root, "Reels") != null && find(root, "Home") == null ?
+                    OverlayPlacement.INSTAGRAM_REEL : OverlayPlacement.INSTAGRAM_FEED;
+                showOverlay(INSTAGRAM, instagramPlacement);
+            } else hideOverlay();
             return;
         }
     }
@@ -96,21 +108,30 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private boolean isOverlayWindow(AccessibilityNodeInfo root) {
         if (root == null) return false;
         CharSequence description = root.getContentDescription();
-        if (description != null && description.toString().startsWith("Download current TikTok post")) return true;
+        if (description != null && description.toString().startsWith("Download current post")) return true;
         for (int i = 0; i < root.getChildCount(); i++) {
             if (isOverlayWindow(root.getChild(i))) return true;
         }
         return false;
     }
 
-    private void showOverlay() {
-        if (overlay != null) return;
+    private void showOverlay(String app, OverlayPlacement newPlacement) {
+        if (overlay != null) {
+            if (!app.equals(sourceApp) || newPlacement != placement) {
+                sourceApp = app;
+                placement = newPlacement;
+                refreshOverlay();
+            }
+            return;
+        }
+        sourceApp = app;
+        placement = newPlacement;
         // Use the application context so the window gets its own overlay token,
         // rather than inheriting this accessibility service's overlay token.
         windowManager = (WindowManager) getApplicationContext().getSystemService(WINDOW_SERVICE);
         ImageView icon = new ImageView(this);
         OverlaySettings.style(icon, this, settings, customIcons);
-        icon.setContentDescription("Download current TikTok post. Long press to open Media Downloader");
+        icon.setContentDescription("Download current post. Long press to open Media Downloader");
         icon.setOnClickListener(this);
         icon.setOnLongClickListener(view -> {
             Intent open = new Intent(this, MainActivity.class);
@@ -123,7 +144,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT);
-        OverlaySettings.place(params, this, settings);
+        OverlaySettings.place(params, this, settings, placement);
         try {
             windowManager.addView(icon, params);
         } catch (RuntimeException error) {
@@ -138,7 +159,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private void refreshOverlay() {
         if (overlay == null || overlayParams == null || settings == null) return;
         OverlaySettings.style(overlay, this, settings, customIcons);
-        OverlaySettings.place(overlayParams, this, settings);
+        OverlaySettings.place(overlayParams, this, settings, placement);
         windowManager.updateViewLayout(overlay, overlayParams);
     }
 
@@ -153,45 +174,82 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         if (collecting) return;
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root != null && root.getPackageName() != null && getPackageName().contentEquals(root.getPackageName())) return;
+        Log.d("MediaDownloader", "Overlay tapped; source=" + sourceApp +
+            " active=" + (root == null ? "none" : root.getPackageName()));
         DiagnosticsStore.trace(this, "overlay.tap", "source=" +
             (root == null || root.getPackageName() == null ? "unavailable" : root.getPackageName()));
+        String app = root == null || root.getPackageName() == null ? "" : root.getPackageName().toString();
         AccessibilityNodeInfo share = null;
-        if (root != null && root.getPackageName() != null && TIKTOK.contentEquals(root.getPackageName())) {
+        if (TIKTOK.equals(app)) {
             share = find(root, "Share video");
             if (share == null) share = find(root, "Share photo");
             if (share == null) share = find(root, "Share post");
+            if (share == null) share = find(root, "Share story");
+            if (share == null) share = find(root, "Share Story");
+        } else if (INSTAGRAM.equals(app)) {
+            share = findShare(root);
         }
-        if (share == null || !share.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+        AccessibilityNodeInfo action = clickableAncestor(share);
+        if (action == null || !action.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            Log.d("MediaDownloader", "No actionable share control in the active post; found=" + (share != null));
             DiagnosticsStore.record(this, "overlay.share", "Share action unavailable on current post");
-            Toast.makeText(this, "Open a TikTok post first", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Open a post first", Toast.LENGTH_SHORT).show();
             return;
         }
         collecting = true;
         DiagnosticsStore.trace(this, "overlay.share", "Share control activated");
         handler.postDelayed(() -> {
-            AccessibilityNodeInfo copy = find(getRootInActiveWindow(), "Copy link");
+            AccessibilityNodeInfo copy = findActionInWindows("Copy link");
             long copyStartedAt = System.currentTimeMillis();
-            if (copy == null || !copy.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                DiagnosticsStore.record(this, "overlay.copy_link", "Copy link action unavailable");
-                finishCollecting();
-                Toast.makeText(this, "Could not find Copy link", Toast.LENGTH_SHORT).show();
+            if (copy != null && copy.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                startClipboardRead(app, copyStartedAt);
                 return;
             }
-            DiagnosticsStore.trace(this, "overlay.copy_link", "Copy link control activated");
-            handler.postDelayed(() -> {
+            if (copy != null && tapCopyControl(copy, app, copyStartedAt)) return;
+            DiagnosticsStore.record(this, "overlay.copy_link", "Copy link action unavailable");
+            finishCollecting();
+            Toast.makeText(this, "Could not find Copy link", Toast.LENGTH_SHORT).show();
+        }, INSTAGRAM.equals(app) ? 1000 : 600);
+    }
+
+    private boolean tapCopyControl(AccessibilityNodeInfo copy, String app, long startedAt) {
+        Rect bounds = new Rect();
+        copy.getBoundsInScreen(bounds);
+        if (bounds.isEmpty() || bounds.width() > 400 || bounds.height() > 400) return false;
+        Path path = new Path();
+        path.moveTo(bounds.centerX(), bounds.centerY());
+        android.accessibilityservice.GestureDescription gesture =
+            new android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 70))
+                .build();
+        return dispatchGesture(gesture, new GestureResultCallback() {
+            @Override public void onCompleted(android.accessibilityservice.GestureDescription ignored) {
+                Log.d("MediaDownloader", "Copy gesture completed");
+                startClipboardRead(app, startedAt);
+            }
+            @Override public void onCancelled(android.accessibilityservice.GestureDescription ignored) {
+                Log.d("MediaDownloader", "Copy gesture cancelled");
+                failCollecting(new Exception("Could not tap Copy link"));
+            }
+        }, handler);
+    }
+
+    private void startClipboardRead(String app, long copyStartedAt) {
+        Log.d("MediaDownloader", "Awaiting fresh clipboard link");
+        DiagnosticsStore.trace(this, "overlay.copy_link", "Copy link control activated");
+        handler.postDelayed(() -> {
                 try {
                     if (overlay == null || overlayParams == null) throw new Exception("Download button disappeared");
                     overlayParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
                     windowManager.updateViewLayout(overlay, overlayParams);
                     overlay.setFocusableInTouchMode(true);
                     overlay.requestFocus();
-                    handler.postDelayed(() -> readFreshLink(copyStartedAt, System.currentTimeMillis() + 5000), 150);
+                    handler.postDelayed(() -> readFreshLink(app, copyStartedAt, System.currentTimeMillis() + 5000), 150);
                 } catch (Exception error) { failCollecting(error); }
-            }, 200);
-        }, 600);
+        }, 200);
     }
 
-    private void readFreshLink(long copyStartedAt, long deadline) {
+    private void readFreshLink(String app, long copyStartedAt, long deadline) {
         try {
             if (overlay == null || overlayParams == null) throw new Exception("Download button disappeared");
             if (!overlay.hasWindowFocus()) overlay.requestFocus();
@@ -200,25 +258,29 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             long copiedAt = description == null ? 0 : description.getTimestamp();
             if (!overlay.hasWindowFocus() || copiedAt < copyStartedAt) {
                 if (System.currentTimeMillis() < deadline) {
-                    handler.postDelayed(() -> readFreshLink(copyStartedAt, deadline), 200);
+                    handler.postDelayed(() -> readFreshLink(app, copyStartedAt, deadline), 200);
                     return;
                 }
-                throw new Exception("TikTok did not copy a fresh link");
+                throw new Exception("The source app did not copy a fresh link");
             }
             ClipData clip = clipboard.getPrimaryClip();
             CharSequence copied = clip == null || clip.getItemCount() == 0 ? null : clip.getItemAt(0).coerceToText(this);
             Matcher match = Pattern.compile("https?://[^\\s]+", Pattern.CASE_INSENSITIVE).matcher(copied == null ? "" : copied);
-            if (!match.find()) throw new Exception("TikTok did not copy a link");
+            if (!match.find()) throw new Exception("The source app did not copy a link");
             String shareUrl = match.group().replaceAll("[),.;]+$", "");
             String host = Uri.parse(shareUrl).getHost();
-            if (host == null || !(host.equals("tiktok.com") || host.endsWith(".tiktok.com"))) throw new Exception("Copied link is not from TikTok");
-            Log.i("MediaDownloader", "Fresh TikTok link copied at " + copiedAt);
+            boolean valid = INSTAGRAM.equals(app) ? InstagramResolver.accepts(shareUrl) :
+                host != null && (host.equals("tiktok.com") || host.endsWith(".tiktok.com"));
+            if (!valid) throw new Exception("Copied link is not a post from the current app");
+            Log.i("MediaDownloader", "Fresh post link copied at " + copiedAt);
             DiagnosticsStore.trace(this, "overlay.fresh_link", "host=" + host +
                 " clipboardAgeMs=" + Math.max(0, System.currentTimeMillis() - copiedAt));
             Intent intent = new Intent(this, DownloadService.class);
             intent.putExtra("shareUrl", shareUrl);
             startForegroundService(intent);
+            boolean shareSheetOpen = findActionInWindows("Copy link") != null;
             finishCollecting();
+            if (shareSheetOpen) performGlobalAction(GLOBAL_ACTION_BACK);
         } catch (Exception error) { failCollecting(error); }
     }
 
@@ -251,4 +313,69 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         }
         return null;
     }
+
+    private AccessibilityNodeInfo findShare(AccessibilityNodeInfo root) {
+        java.util.ArrayList<AccessibilityNodeInfo> candidates = new java.util.ArrayList<>();
+        collectShare(root, candidates);
+        if (candidates.isEmpty()) return null;
+        int middle = getResources().getDisplayMetrics().heightPixels / 2;
+        AccessibilityNodeInfo best = null;
+        int bestDistance = Integer.MAX_VALUE;
+        Rect bounds = new Rect();
+        for (AccessibilityNodeInfo candidate : candidates) {
+            candidate.getBoundsInScreen(bounds);
+            // On a scrolling feed, the previous post's controls may remain at the top
+            // while the next post fills the screen. Never select that previous post.
+            if (bounds.centerY() < middle) continue;
+            int distance = Math.abs(bounds.centerY() - middle);
+            if (distance < bestDistance) { best = candidate; bestDistance = distance; }
+        }
+        return best;
+    }
+
+    private void collectShare(AccessibilityNodeInfo root, java.util.List<AccessibilityNodeInfo> found) {
+        if (root == null || !root.isVisibleToUser()) return;
+        CharSequence description = root.getContentDescription();
+        if (description != null) {
+            String label = description.toString();
+            if (label.startsWith("Send post.") || label.startsWith("Send reel.") ||
+                label.equals("Share")) found.add(root);
+        }
+        for (int i = 0; i < root.getChildCount(); i++) collectShare(root.getChild(i), found);
+    }
+
+    private AccessibilityNodeInfo clickableAncestor(AccessibilityNodeInfo node) {
+        for (int depth = 0; node != null && depth < 5; depth++, node = node.getParent()) {
+            if (node.isClickable() || node.getActionList().contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK))
+                return node;
+        }
+        return null;
+    }
+
+    private AccessibilityNodeInfo findActionInWindows(String label) {
+        AccessibilityNodeInfo action = findAction(getRootInActiveWindow(), label);
+        if (action != null) return action;
+        for (AccessibilityWindowInfo window : getWindows()) {
+            action = findAction(window.getRoot(), label);
+            if (action != null) return action;
+        }
+        return null;
+    }
+
+    private AccessibilityNodeInfo findAction(AccessibilityNodeInfo root, String needle) {
+        if (root == null) return null;
+        CharSequence description = root.getContentDescription();
+        CharSequence label = root.getText();
+        if ((description != null && description.toString().startsWith(needle)) ||
+            (label != null && label.toString().startsWith(needle))) {
+            AccessibilityNodeInfo action = clickableAncestor(root);
+            if (action != null) return action;
+        }
+        for (int i = 0; i < root.getChildCount(); i++) {
+            AccessibilityNodeInfo action = findAction(root.getChild(i), needle);
+            if (action != null) return action;
+        }
+        return null;
+    }
+
 }

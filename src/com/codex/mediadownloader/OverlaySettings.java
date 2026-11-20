@@ -65,13 +65,18 @@ final class OverlaySettings {
     }
 
     static void place(WindowManager.LayoutParams params, Context context, OverlayPreferences prefs) {
+        place(params, context, prefs, OverlayPlacement.TIKTOK);
+    }
+
+    static void place(WindowManager.LayoutParams params, Context context, OverlayPreferences prefs,
+                      OverlayPlacement placement) {
         int size = prefs.get(OverlayOption.SIZE);
         params.width = dp(context, size);
         params.height = dp(context, size);
-        params.gravity = (prefs.get(OverlayOption.SIDE) == 0 ? Gravity.LEFT : Gravity.RIGHT) | Gravity.TOP;
-        params.x = dp(context, prefs.get(OverlayOption.SIDE_GAP));
+        params.gravity = (prefs.get(placement.side) == 0 ? Gravity.LEFT : Gravity.RIGHT) | Gravity.TOP;
+        params.x = dp(context, prefs.get(placement.gap));
         int usableHeight = context.getResources().getDisplayMetrics().heightPixels;
-        int center = usableHeight * prefs.get(OverlayOption.HEIGHT) / 100;
+        int center = usableHeight * prefs.get(placement.height) / 100;
         params.y = Math.max(0, Math.min(usableHeight - params.height, center - params.height / 2));
     }
 }

@@ -110,12 +110,14 @@ public class DownloadService extends Service {
             DownloadStore.save(this, entry, false);
             DiagnosticsStore.trace(this, "download.resolve", "job=" + jobId + " stage=" + entry.stage);
             notifications.notify(jobId, notice(jobId, title, "Finding post media", 0, true, true));
-            StreamResolver.Result result = StreamResolver.resolve(shareUrl,
-                (component, detail) -> DiagnosticsStore.trace(this, component, "job=" + jobId + " " + detail));
+            StreamResolver.Trace trace = (component, detail) ->
+                DiagnosticsStore.trace(this, component, "job=" + jobId + " " + detail);
+            StreamResolver.Result result = InstagramResolver.accepts(shareUrl) ?
+                InstagramResolver.resolve(shareUrl, trace) : StreamResolver.resolve(shareUrl, trace);
             if (retry && (!result.isAlbum() || !result.videoId.equals(entry.videoId)))
                 throw new Exception("The shared album no longer matches this job");
             for (HttpCookie cookie : result.cookies.getCookieStore().getCookies())
-                Log.d("TikTokStream", "Page cookie " + cookie.getName() + " domain=" + cookie.getDomain());
+                Log.d("MediaDownloader", "Page cookie " + cookie.getName() + " domain=" + cookie.getDomain());
             title = result.profileName + " • " + result.videoId;
             fileName = fileName(result);
             entry.profileName = result.profileName;
@@ -134,19 +136,23 @@ public class DownloadService extends Service {
                 final String albumTitle = title;
                 entry.mediaType = "album";
                 entry.state = "selecting";
-                entry.stage = "Preparing " + result.photos.size() + " photos";
+                entry.stage = result.photos.size() == 1 ? "Preparing photo" :
+                    "Preparing " + result.photos.size() + " photos";
                 DownloadStore.save(this, entry, true);
                 AlbumTransfer.Summary summary = AlbumTransfer.download(this, result, entry, (changed, current, total) -> {
                     DownloadStore.save(this, changed, false);
                     notifications.notify(jobId, albumNotice(jobId, albumTitle, changed, current, total));
                 });
                 entry.state = summary.failed == 0 ? "complete" : summary.complete == 0 ? "failed" : "partial";
-                entry.stage = summary.complete + " of " + result.photos.size() + " photos saved";
+                entry.stage = result.photos.size() == 1 && summary.complete == 1 ? "Photo saved" :
+                    summary.complete + " of " + result.photos.size() + " photos saved";
                 entry.error = summary.failed == 0 ? "" : summary.failed + " photo" + (summary.failed == 1 ? "" : "s") + " failed";
                 entry.speedBytesPerSecond = 0;
                 entry.finishedAt = System.currentTimeMillis();
                 DownloadStore.save(this, entry, true);
-                String resultTitle = summary.failed == 0 ? "Album complete" : "Album incomplete";
+                String resultTitle = result.photos.size() == 1 ?
+                    summary.failed == 0 ? "Photo complete" : "Photo failed" :
+                    summary.failed == 0 ? "Album complete" : "Album incomplete";
                 notifications.notify(-jobId, resultNotice(resultTitle, entry.stage,
                     "Post: " + result.pageUrl + "\n" + entry.stage + "\nSize: " + formatBytes(entry.downloadedBytes), jobId));
                 DiagnosticsStore.trace(this, "download.album_result", "job=" + jobId +
@@ -183,7 +189,7 @@ public class DownloadService extends Service {
                 " bytes=" + saved.bytes + " resolution=" + saved.tracks.width + "x" + saved.tracks.height +
                 " video=" + saved.tracks.videoMime + " audio=" + saved.tracks.audioMime);
         } catch (Exception error) {
-            Log.e("TikTokStream", "Download " + jobId + " failed", error);
+            Log.e("MediaDownloader", "Download " + jobId + " failed", error);
             DiagnosticsStore.record(this, "download.failed job=" + jobId + " stage=" + entry.stage, error);
             DiagnosticsStore.trace(this, "download.failed", "job=" + jobId + " state=" + entry.state +
                 " stage=" + entry.stage + " received=" + entry.downloadedBytes +
@@ -238,19 +244,20 @@ public class DownloadService extends Service {
                     entry.state = "connecting";
                     entry.stage = "Connecting to stream " + option;
                     DownloadStore.save(this, entry, false);
-                    Log.i("TikTokStream", "Trying stream option " + option + " " + candidate.width +
+                    Log.i("MediaDownloader", "Trying stream option " + option + " " + candidate.width +
                         "x" + candidate.height + " " + (candidate.variant.equals("default") ? "default" : "bitrate"));
                     Exception accessError = null;
                     try {
                         fetch(candidate.url, result.pageUrl, result.cookies, 0, false, video,
                             "Downloading stream • option " + option, jobId, title, fileName,
                             candidate.width, candidate.height, entry);
-                        Log.i("TikTokStream", "Stream option " + option + " downloaded without visitor cookies");
+                        Log.i("MediaDownloader", "Stream option " + option + " downloaded without visitor cookies");
                     } catch (Exception publicError) {
                         accessError = publicError;
                         DiagnosticsStore.record(this, "stream.public job=" + jobId + " option=" + option, publicError);
                         video.delete();
-                        if (!MediaRequestCookies.retryWithVisitorCookies(publicError)) throw publicError;
+                        if (!"tiktok".equals(result.platform) ||
+                            !MediaRequestCookies.retryWithVisitorCookies(publicError)) throw publicError;
                         for (int profile = 0; profile < (Build.VERSION.SDK_INT >= 34 ? 6 : 5); profile++) {
                             try {
                                 fetch(candidate.url, result.pageUrl, result.cookies, profile, true, video,
@@ -261,7 +268,7 @@ public class DownloadService extends Service {
                             } catch (Exception error) {
                                 accessError = error;
                                 DiagnosticsStore.record(this, "stream.visitor job=" + jobId + " option=" + option + " profile=" + profile, error);
-                                Log.w("TikTokStream", "Stream option " + option + " visitor profile " + profile +
+                                Log.w("MediaDownloader", "Stream option " + option + " visitor profile " + profile +
                                     " failed: " + error.getMessage());
                                 video.delete();
                                 if (!MediaRequestCookies.retryWithVisitorCookies(error)) break;
@@ -281,7 +288,7 @@ public class DownloadService extends Service {
                         videoOnlyVariants.add(candidate.variant);
                         throw invalidTracks;
                     }
-                    Log.i("TikTokStream", "Selected muxed stream option=" + option +
+                    Log.i("MediaDownloader", "Selected muxed stream option=" + option +
                         " listed=" + candidate.width + "x" + candidate.height +
                         " actual=" + tracks.width + "x" + tracks.height +
                         " video=" + tracks.videoMime + " audio=" + tracks.audioMime);
@@ -296,7 +303,7 @@ public class DownloadService extends Service {
                     lastError = candidateError.getMessage();
                     if (lastError != null && lastError.contains("HTTP 403")) accessDenied++;
                     if (lastError != null && lastError.contains("audio")) noAudio++;
-                    Log.w("TikTokStream", "Skipping stream option " + option + " " +
+                    Log.w("MediaDownloader", "Skipping stream option " + option + " " +
                         candidate.width + "x" + candidate.height + ": " + candidateError.getMessage());
                     video.delete();
                     entry.state = "retrying";
@@ -310,20 +317,19 @@ public class DownloadService extends Service {
             }
             if (tracks == null) {
                 if (accessDenied > 0 && accessDenied + noAudio == option)
-                    throw new Exception("TikTok refused " + accessDenied + " playback stream" +
+                    throw new Exception("Source refused " + accessDenied + " playback stream" +
                         (accessDenied == 1 ? "" : "s") + " (HTTP 403); please retry");
                 if (noAudio > 0 && noAudio == option)
-                    throw new Exception("TikTok's listed streams did not include audio");
+                    throw new Exception("The listed streams did not include audio");
                 throw new Exception("No usable stream with video and audio: " +
                     (lastError == null ? "unknown response" : lastError));
             }
             entry.state = "tagging";
-            entry.stage = "Adding TikTok source link";
+            entry.stage = "Adding source link";
             DownloadStore.save(this, entry, false);
             notifications.notify(jobId, detailNotice(jobId, title, fileName, entry.stage, tracks.width,
                 tracks.height, video.length(), video.length(), tracks));
-            String sourceUrl = "https://www.tiktok.com/@" + result.profileName + "/video/" + result.videoId;
-            Mp4SourceMetadata.write(video, sourceUrl, result.postText);
+            Mp4SourceMetadata.write(video, result.pageUrl, result.postText);
             MediaMux.Tracks taggedTracks = MediaMux.inspectMuxed(video);
             if (taggedTracks.width != tracks.width || taggedTracks.height != tracks.height ||
                 !taggedTracks.videoMime.equals(tracks.videoMime) || !taggedTracks.audioMime.equals(tracks.audioMime))
@@ -365,7 +371,7 @@ public class DownloadService extends Service {
             }
             Uri savedFile = pending;
             pending = null;
-            Log.i("TikTokStream", "Saved " + actualName + " bytes=" + video.length() +
+            Log.i("MediaDownloader", "Saved " + actualName + " bytes=" + video.length() +
                 " resolution=" + tracks.width + "x" + tracks.height + " audio=" + tracks.audioMime);
             return new SavedVideo(actualName, savedFile, video.length(), tracks);
         } catch (Exception error) {
@@ -379,7 +385,8 @@ public class DownloadService extends Service {
     private static String fileName(StreamResolver.Result result) {
         SimpleDateFormat timestamp = new SimpleDateFormat("yyyy-MM-dd_hh-mm", Locale.US);
         String publishedAt = timestamp.format(new Date(result.publishTimeSeconds * 1000L));
-        return result.profileName + "_profile_" + result.accountId + "_VideoID_" + result.videoId + "_" + publishedAt + ".mp4";
+        String idLabel = result.pageUrl.contains("/stories/") ? "StoryID" : "VideoID";
+        return result.profileName + "_profile_" + result.accountId + "_" + idLabel + "_" + result.videoId + "_" + publishedAt + ".mp4";
     }
 
     private void fetch(String url, String referer, java.net.CookieManager cookies, int profile,
@@ -411,7 +418,7 @@ public class DownloadService extends Service {
                 " host=" + connection.getURL().getHost() + " http=" + code +
                 " type=" + connection.getContentType() + " bytes=" + connection.getContentLengthLong() +
                 " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStarted));
-            Log.d("TikTokStream", "Media response profile=" + profile + " host=" + connection.getURL().getHost() +
+            Log.d("MediaDownloader", "Media response profile=" + profile + " host=" + connection.getURL().getHost() +
                 " status=" + code + " type=" + connection.getContentType());
             if (code != 200 && code != 206) throw new Exception(label + ": HTTP " + code);
             long total = connection.getContentLengthLong();
@@ -464,7 +471,7 @@ public class DownloadService extends Service {
             connection.disconnect();
             if (engine != null) {
                 try { engine.shutdown(); }
-                catch (Exception error) { Log.d("TikTokStream", "HTTP engine shutdown deferred", error); }
+                catch (Exception error) { Log.d("MediaDownloader", "HTTP engine shutdown deferred", error); }
             }
         }
     }

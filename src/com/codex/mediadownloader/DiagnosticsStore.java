@@ -107,7 +107,8 @@ final class DiagnosticsStore {
             writer.write("Build fingerprint: " + DiagnosticsFormat.clean(Build.FINGERPRINT) + "\n");
             writer.write("Security patch: " + Build.VERSION.SECURITY_PATCH + "\n");
             writer.write("Locale/time zone: " + Locale.getDefault().toLanguageTag() + " / " + TimeZone.getDefault().getID() + "\n");
-            writer.write("Source app version: " + sourceAppVersion(context) + "\n");
+            writer.write("TikTok version: " + sourceAppVersion(context, "com.zhiliaoapp.musically") + "\n");
+            writer.write("Instagram version: " + sourceAppVersion(context, "com.instagram.android") + "\n");
             writer.write("Display: " + displayStatus(context) + "\n");
             writer.write("Network: " + networkStatus(context) + "\n");
             writer.write("Private storage available: " + storageStatus(context) + "\n");
@@ -198,9 +199,9 @@ final class DiagnosticsStore {
         writer.write("\n");
     }
 
-    private static String sourceAppVersion(Context context) {
+    private static String sourceAppVersion(Context context, String packageName) {
         try {
-            PackageInfo info = context.getPackageManager().getPackageInfo("com.zhiliaoapp.musically", 0);
+            PackageInfo info = context.getPackageManager().getPackageInfo(packageName, 0);
             return DiagnosticsFormat.clean(info.versionName) + " (" + info.getLongVersionCode() + ")";
         } catch (Exception error) { return "unavailable"; }
     }

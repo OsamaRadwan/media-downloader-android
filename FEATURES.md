@@ -1,6 +1,6 @@
 # Media Downloader feature catalog
 
-This document describes implemented features in terms that can be reused for additional source applications. **The current app implements one source integration: TikTok.** Adding another source still requires code for that source's on-screen controls, links, playback data, and post details.
+This document describes implemented features in terms that can be reused for additional source applications. **The current app integrates TikTok and Instagram.** Each additional source still needs code for its on-screen controls, links, playback data, and post details.
 
 ## Floating download control
 
@@ -13,7 +13,7 @@ This document describes implemented features in terms that can be reused for add
 ## Button appearance and settings
 
 - The Settings page shows both a large icon preview and a live-size button at its actual screen position. Changes appear immediately in the preview and the floating control and persist across normal app relaunches.
-- Position controls: left or right side, vertical position, and distance from the screen border.
+- Position controls: left or right side, vertical position, and distance from the screen border. TikTok, Instagram feed posts, and opened Instagram Reels have independent saved placement values. The live border preview can switch among them.
 - Appearance controls: button size, padding around the arrow, arrow color and opacity, optional background shape, background color, and background opacity. The background can be absent, circular, or rounded.
 - Four built-in transparent icon styles are available: solid, outline, simple, and tray. Users can also import transparent images from the phone, select or remove them, and keep up to 30 custom icons in app-private storage. Custom images retain their own colors.
 - Settings include permission status and links to Android's Accessibility, overlay, and notification settings, plus a reset action.
@@ -48,7 +48,7 @@ This document describes implemented features in terms that can be reused for add
 - Download, album, overlay, thumbnail, history-storage, icon-import, and unexpected app-crash failures are written to app-private files that survive normal relaunches and app updates. Separate operation traces record the stages and sanitized HTTP outcomes around a failure without displacing failure records.
 - The app keeps separate log files for the current UTC date and six preceding dates, so later activity cannot rotate away an earlier day's file. On the eighth day, the oldest date's files are deleted. It checks retention at app startup, at each UTC day change while its process runs, and whenever logs are written, counted, or exported. Each day allows up to 512 KiB of failures and 256 KiB of operation traces; reaching a limit records an omission marker. No Android alarm or external cleanup process is involved.
 - Settings shows the saved failure count. Export diagnostic report opens Android's document picker and writes a text report to the location the user chooses. It includes app and source-app versions, Android build and device details, display and network state, storage, permissions, button settings, recent active/unsuccessful job snapshots, failure events, and the operation trace. The job snapshot includes validated public post links without query strings, transfer sizes, selected formats, and photo errors so an issue can be investigated without connecting the phone. A report can be exported even when no failure has been recorded.
-- Stored event details remove web URLs, local paths, long numeric IDs, and common secret values. Exported public post links are included only from validated TikTok hosts and omit tracking parameters. The app does not read system logcat or upload reports automatically.
+- Stored event details remove web URLs, local paths, long numeric IDs, and common secret values. Exported public post links are included only from validated TikTok or Instagram hosts and omit tracking parameters. The app does not read system logcat or upload reports automatically.
 
 ## Photo album downloads
 
@@ -56,9 +56,23 @@ This document describes implemented features in terms that can be reused for add
 - Each photo is saved to public Downloads as `<profile>_profile_<account>_PostID_<post>_<yyyy-MM-dd_hh-mm>_photo_<index>-of-<total>.<extension>`. Its actual image format and dimensions are checked before saving. The download record keeps the canonical source URL, title, caption, hashtags, and each file's details. JPEGs also embed the source URL, available post text, hashtags, and creator in EXIF fields; PNG and WebP metadata remain in the app record.
 - One album job displays the saved photo count, bytes, speed while transferring, and one ordered row per photo with a thumbnail, actual dimensions, source-listed resolution comparison, filename, error, and Open photo action when available. Silent progress and result notifications focus the album card. A partial failure retains saved photos; Retry missing photos resolves fresh image URLs and skips photos already saved in that job.
 
+## Instagram integration
+
+- The button appears over Instagram with separate positions for scrolling feed posts and opened Reels. The share control must belong to the post occupying the main screen area; a previous post's controls at the top of a scrolling feed are ignored.
+- At tap time, Accessibility opens the current post's share sheet and copies a fresh Instagram URL. The public embed resolver uses an anonymous request and reads the owner, post ID, caption, video URL, or ordered photo list when Instagram exposes them. If a single-photo embed has no structured media, the resolver accepts its responsive image list only after the image cache key matches the requested post ID, then reads the owner's public profile ID. It does not read the installed Instagram app's account session.
+- Photo albums use the shared per-photo quality comparison and save each photo that matches Instagram's listed resolution. Video downloads use the shared muxed MP4 and embedded-source checks. Download cards link back to Instagram, including failed jobs with a valid post link.
+- Availability depends on the public response and network route. Two tested single-photo posts saved the largest publicly listed responsive images, 1439×1455 and 1440×1440. Their embed pages did not expose captions, so those downloads have no invented caption or hashtags. One Reel exposed only a video-only file and failed visibly. A publicly listed rendition does not establish the original upload resolution.
+
+## Story downloads
+
+- The target behavior is one tap on the currently visible TikTok or Instagram Story to save that Story's video with audio or its photo at the largest accessible source-listed resolution. The app must identify the individual Story at tap time and must never silently substitute a linked post, profile picture, screenshot, or smaller preview.
+- TikTok Story share links that resolve to `/video/<id>` or `/photo/<id>` use the existing anonymous post resolver, video-track validation, and per-photo resolution comparison. Story-specific Share labels are recognized by the floating control. A Story that does not provide a current share link or public media appears as a failure.
+- Instagram Stories have a separate link and media path: `/stories/<account>/<story-id>/`. The button copies the Story link from Instagram's Story share sheet. The resolver looks for that exact Story ID in anonymously available Story data, compares photo renditions or video variants, and uses the same save, metadata, progress, notification, and Downloads-page flows. Saved Story filenames use `StoryID` and the Downloads card identifies a Story.
+- Story availability is time limited and source controlled. On the tested public NASA Story, Instagram's anonymous Story endpoint returned no media even though the Story was visible in the installed app. That Story currently fails with an explicit reason. This integration does not access Instagram's signed-in session or claim full-resolution support for Stories whose media is withheld from anonymous requests.
+
 ## Adding another source application
 
-The shared UI and transfer behavior can be reused, but the current capture and resolver code is still specific to TikTok. Each new source integration needs:
+The shared UI and transfer behavior can be reused, but capture and media discovery remain source-specific. Each new source integration needs:
 
 1. A way to recognize the source application and show the floating control while it is in the foreground, with a clear response if no supported post is available.
 2. A reliable, fresh way to identify the **current** video or photo album and obtain its post URL or ID without opening Media Downloader.

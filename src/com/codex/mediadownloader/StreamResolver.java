@@ -51,9 +51,16 @@ public final class StreamResolver {
         final long publishTimeSeconds;
         final List<Candidate> candidates;
         final List<PhotoCandidate> photos;
+        final String platform;
         Result(String profileName, String accountId, String videoId, String coverUrl, String pageUrl,
                PostText postText, long publishTimeSeconds, List<Candidate> candidates,
                List<PhotoCandidate> photos, CookieManager cookies) {
+            this(profileName, accountId, videoId, coverUrl, pageUrl, postText,
+                publishTimeSeconds, candidates, photos, cookies, "tiktok");
+        }
+        Result(String profileName, String accountId, String videoId, String coverUrl, String pageUrl,
+               PostText postText, long publishTimeSeconds, List<Candidate> candidates,
+               List<PhotoCandidate> photos, CookieManager cookies, String platform) {
             this.profileName = profileName;
             this.accountId = accountId;
             this.videoId = videoId;
@@ -64,6 +71,7 @@ public final class StreamResolver {
             this.publishTimeSeconds = publishTimeSeconds;
             this.candidates = candidates;
             this.photos = photos;
+            this.platform = platform;
         }
 
         boolean isAlbum() { return !photos.isEmpty(); }

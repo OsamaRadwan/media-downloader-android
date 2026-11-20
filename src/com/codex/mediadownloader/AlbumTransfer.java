@@ -111,7 +111,7 @@ final class AlbumTransfer {
                 } else optionFile.delete();
             } catch (Exception error) {
                 lastError = error;
-                if (MediaRequestCookies.retryWithVisitorCookies(error)) {
+                if ("tiktok".equals(result.platform) && MediaRequestCookies.retryWithVisitorCookies(error)) {
                     visitorFallbacks.add(url);
                     DiagnosticsStore.record(context, "album.public job=" + entry.id + " index=" + candidate.index, error);
                 }
@@ -136,6 +136,11 @@ final class AlbumTransfer {
             }
         }
         if (best == null) throw new Exception(lastError == null ? "No image URL worked" : lastError.getMessage());
+        if ("instagram".equals(result.platform) && listedPixels > 0 &&
+            (long) best.width * best.height < listedPixels) {
+            selected.delete();
+            throw new Exception("Instagram exposed only a photo below its listed resolution");
+        }
         DiagnosticsStore.trace(context, "album.selected", "job=" + entry.id + " index=" + candidate.index +
             " listed=" + candidate.width + "x" + candidate.height +
             " actual=" + best.width + "x" + best.height + " bytes=" + selected.length() +
@@ -276,8 +281,9 @@ final class AlbumTransfer {
     private static String fileName(StreamResolver.Result result, int index, String extension) {
         String date = new SimpleDateFormat("yyyy-MM-dd_hh-mm", Locale.US)
             .format(new Date(result.publishTimeSeconds * 1000L));
-        return String.format(Locale.US, "%s_profile_%s_PostID_%s_%s_photo_%03d-of-%03d.%s",
-            result.profileName, result.accountId, result.videoId, date, index, result.photos.size(), extension);
+        String idLabel = result.pageUrl.contains("/stories/") ? "StoryID" : "PostID";
+        return String.format(Locale.US, "%s_profile_%s_%s_%s_%s_photo_%03d-of-%03d.%s",
+            result.profileName, result.accountId, idLabel, result.videoId, date, index, result.photos.size(), extension);
     }
 
     static final class PhotoFile {

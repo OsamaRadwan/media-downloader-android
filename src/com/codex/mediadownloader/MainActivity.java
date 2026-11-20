@@ -66,6 +66,7 @@ public class MainActivity extends Activity {
     private ImageView preview;
     private FrameLayout liveButtonHost;
     private ImageView liveButton;
+    private OverlayPlacement previewPlacement = OverlayPlacement.TIKTOK;
     private ScrollView settingsScroll;
     private RadioGroup iconStyleGroup;
     private final List<CustomIconButton> customIconButtons = new ArrayList<>();
@@ -242,7 +243,7 @@ public class MainActivity extends Activity {
         scroll.addView(page);
 
         addText(page, "Media Downloader", 27, TEXT, true, 0);
-        addText(page, "The button at the screen border shows its live position and appearance. Use the larger preview below to inspect the icon. On TikTok, tap to download or hold to open this app. Changes save automatically.", 14, MUTED, false, 8);
+        addText(page, "The button at the screen border shows its live position and appearance. Tap it over a post to download, or hold it to open this app. Changes save automatically.", 14, MUTED, false, 8);
 
         FrameLayout previewCard = new FrameLayout(this);
         GradientDrawable previewBackground = new GradientDrawable();
@@ -257,11 +258,47 @@ public class MainActivity extends Activity {
         previewCard.addView(preview, new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER));
         addText(page, "Preview", 12, MUTED, false, 7);
 
-        section(page, "Placement");
+        section(page, "Live placement preview");
+        RadioGroup placementPreview = new RadioGroup(this);
+        placementPreview.setOrientation(RadioGroup.VERTICAL);
+        String[] placementNames = {"TikTok", "Instagram feed posts", "Instagram Reels"};
+        OverlayPlacement[] placements = OverlayPlacement.values();
+        for (int i = 0; i < placementNames.length; i++) {
+            RadioButton radio = new RadioButton(this);
+            radio.setId(View.generateViewId());
+            radio.setText(placementNames[i]);
+            radio.setTextColor(TEXT);
+            radio.setButtonTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+            placementPreview.addView(radio);
+            if (previewPlacement == placements[i]) placementPreview.check(radio.getId());
+        }
+        placementPreview.setOnCheckedChangeListener((group, checked) -> {
+            for (int i = 0; i < group.getChildCount(); i++)
+                if (group.getChildAt(i).getId() == checked) {
+                    previewPlacement = placements[i];
+                    refreshLiveButton();
+                    break;
+                }
+        });
+        page.addView(placementPreview);
+
+        section(page, "TikTok placement");
         addText(page, "Screen side", 15, TEXT, true, 12);
         radioGroup(page, new String[]{"Left", "Right"}, OverlayOption.SIDE);
         slider(page, "Vertical position", OverlayOption.HEIGHT, "%");
         slider(page, "Distance from border", OverlayOption.SIDE_GAP, " dp");
+
+        section(page, "Instagram feed placement");
+        addText(page, "Screen side", 15, TEXT, true, 12);
+        radioGroup(page, new String[]{"Left", "Right"}, OverlayOption.INSTAGRAM_FEED_SIDE);
+        slider(page, "Vertical position", OverlayOption.INSTAGRAM_FEED_HEIGHT, "%");
+        slider(page, "Distance from border", OverlayOption.INSTAGRAM_FEED_GAP, " dp");
+
+        section(page, "Instagram Reels placement");
+        addText(page, "Screen side", 15, TEXT, true, 12);
+        radioGroup(page, new String[]{"Left", "Right"}, OverlayOption.INSTAGRAM_REEL_SIDE);
+        slider(page, "Vertical position", OverlayOption.INSTAGRAM_REEL_HEIGHT, "%");
+        slider(page, "Distance from border", OverlayOption.INSTAGRAM_REEL_GAP, " dp");
 
         section(page, "Arrow and touch area");
         addText(page, "Icon style (transparent image)", 15, TEXT, true, 12);
@@ -282,7 +319,7 @@ public class MainActivity extends Activity {
         slider(page, "Background opacity", OverlayOption.BACKGROUND_OPACITY, "%");
 
         section(page, "App access");
-        addText(page, "The arrow appears over TikTok. Allow these permissions for downloads and progress notifications.", 13, MUTED, false, 7);
+        addText(page, "The arrow appears over TikTok and Instagram. Allow these permissions for downloads and progress notifications.", 13, MUTED, false, 7);
         overlayStatus = addText(page, "", 13, MUTED, false, 12);
         button(page, "Display over other apps", () -> startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
             Uri.parse("package:" + getPackageName()))));
@@ -552,8 +589,8 @@ public class MainActivity extends Activity {
         if (liveButton == null || liveButtonHost == null || liveButtonHost.getWidth() == 0 || prefs == null) return;
         OverlaySettings.style(liveButton, this, prefs, customIcons);
         WindowManager.LayoutParams screen = new WindowManager.LayoutParams();
-        OverlaySettings.place(screen, this, prefs);
-        int x = prefs.get(OverlayOption.SIDE) == 0 ? screen.x : liveButtonHost.getWidth() - screen.x - screen.width;
+        OverlaySettings.place(screen, this, prefs, previewPlacement);
+        int x = prefs.get(previewPlacement.side) == 0 ? screen.x : liveButtonHost.getWidth() - screen.x - screen.width;
         WindowInsets insets = liveButtonHost.getRootWindowInsets();
         int y = screen.y + (insets == null ? 0 : insets.getSystemWindowInsetTop());
         x = Math.max(0, Math.min(liveButtonHost.getWidth() - screen.width, x));

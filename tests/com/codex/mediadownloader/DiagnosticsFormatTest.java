@@ -20,6 +20,11 @@ public final class DiagnosticsFormatTest {
             "Exception type and redacted reason must remain");
         check(DiagnosticsFormat.publicPostUrl("https://vt.tiktok.com/ZShort123/?share_token=private")
             .equals("https://vt.tiktok.com/ZShort123/"), "Public post links must omit tracking queries");
+        check(DiagnosticsFormat.publicPostUrl("https://www.instagram.com/reel/Df0DoVpmTBI/?igsh=private")
+            .equals("https://www.instagram.com/reel/Df0DoVpmTBI/"), "Instagram links must omit tracking queries");
+        check(DiagnosticsFormat.publicPostUrl("https://www.instagram.com/stories/nasa/4034039760237270159/?utm_source=private")
+            .equals("https://www.instagram.com/stories/nasa/4034039760237270159/"),
+            "Story links must retain the item ID and omit tracking queries");
         check(DiagnosticsFormat.publicPostUrl("https://evil.example/video/123").equals("unavailable"),
             "Untrusted source links must not enter diagnostic reports");
         System.out.println("DiagnosticsFormatTest passed");

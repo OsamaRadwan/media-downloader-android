@@ -93,6 +93,27 @@ final class DownloadItem {
         return "";
     }
 
+    String postUrl() {
+        if (isInstagramUrl(sourceUrl)) return sourceUrl;
+        if (isInstagramUrl(shareUrl)) return shareUrl;
+        return tiktokUrl();
+    }
+
+    boolean fromInstagram() {
+        return isInstagramUrl(sourceUrl) || isInstagramUrl(shareUrl);
+    }
+
+    private static boolean isInstagramUrl(String value) {
+        try {
+            URI uri = new URI(value);
+            String host = uri.getHost();
+            return "https".equalsIgnoreCase(uri.getScheme()) && host != null &&
+                (host.equalsIgnoreCase("instagram.com") || host.equalsIgnoreCase("www.instagram.com")) &&
+                (uri.getPath().matches("/(p|reel|tv)/[A-Za-z0-9_-]{5,20}/?") ||
+                 uri.getPath().matches("/stories/[A-Za-z0-9._]{1,40}/[0-9]{15,22}/?"));
+        } catch (Exception ignored) { return false; }
+    }
+
     private String validShareUrl() {
         try {
             URI parsed = new URI(shareUrl);

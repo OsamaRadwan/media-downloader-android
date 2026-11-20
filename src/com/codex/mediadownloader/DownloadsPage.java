@@ -58,7 +58,7 @@ final class DownloadsPage {
         text(page, "Downloads", 27, TEXT, true, 0);
         text(page, "Downloads continue in the background. Tap a notification to return to its details.", 14, MUTED, false, 7);
         summary = text(page, "", 14, ACCENT, true, 18);
-        empty = text(page, "No downloads yet. Open a TikTok video or photo album and tap the floating arrow.", 15, MUTED, false, 24);
+        empty = text(page, "No downloads yet. Open a TikTok or Instagram post and tap the floating arrow.", 15, MUTED, false, 24);
         list = new LinearLayout(activity);
         list.setOrientation(LinearLayout.VERTICAL);
         page.addView(list);
@@ -203,12 +203,15 @@ final class DownloadsPage {
             if (shownUpdatedAt == entry.updatedAt && !entry.isActive()) return;
             shownUpdatedAt = entry.updatedAt;
             boolean album = "album".equals(entry.mediaType);
+            boolean story = entry.sourceUrl.contains("/stories/") || entry.shareUrl.contains("/stories/");
             title.setText(entry.profileName.isEmpty() ?
-                (entry.videoId.isEmpty() ? "Download" : (album ? "Album " : "Video ") + entry.videoId) :
-                "@" + entry.profileName + (album ? " • photo album" : ""));
+                (entry.videoId.isEmpty() ? story ? "Story download" : "Download" :
+                    (story ? "Story " : album ? "Album " : "Video ") + entry.videoId) :
+                "@" + entry.profileName + (story ? album ? " • photo Story" : " • video Story" :
+                    album ? entry.photos.size() == 1 ? " • photo" : " • photo album" : ""));
             state.setText(entry.stage.isEmpty() ? entry.state : entry.stage);
             state.setTextColor("failed".equals(entry.state) || "partial".equals(entry.state) ? ERROR : ACCENT);
-            file.setText(entry.fileName.isEmpty() ? "Reading post details…" : entry.fileName);
+            file.setText(entry.fileName.isEmpty() ? story ? "Reading Story details…" : "Reading post details…" : entry.fileName);
             int savedPhotos = 0;
             for (DownloadItem.PhotoItem photo : entry.photos) if (!photo.savedUri.isEmpty()) savedPhotos++;
             if (album && !entry.photos.isEmpty()) {
@@ -228,8 +231,8 @@ final class DownloadsPage {
                 progress.setVisibility(View.GONE);
             }
             String amount;
-            if (album) amount = savedPhotos + " of " + entry.photos.size() + " photos saved • " +
-                bytes(entry.downloadedBytes);
+            if (album) amount = (entry.photos.size() == 1 && savedPhotos == 1 ? "1 photo saved" :
+                savedPhotos + " of " + entry.photos.size() + " photos saved") + " • " + bytes(entry.downloadedBytes);
             else {
                 amount = "Downloaded: " + bytes(entry.downloadedBytes) + " / " +
                     (entry.totalBytes > 0 ? bytes(entry.totalBytes) : "size unknown");
@@ -249,25 +252,28 @@ final class DownloadsPage {
                 speed.setVisibility(View.GONE);
             }
             StringBuilder metadata = new StringBuilder();
-            if (!entry.videoId.isEmpty()) metadata.append(album ? "Post ID: " : "Video ID: ").append(entry.videoId).append('\n');
+            if (!entry.videoId.isEmpty()) metadata.append(story ? "Story ID: " : album || entry.fromInstagram() ? "Post ID: " : "Video ID: ").append(entry.videoId).append('\n');
             if (!entry.accountId.isEmpty()) metadata.append("Account ID: ").append(entry.accountId).append('\n');
             if (entry.publishTimeSeconds > 0) metadata.append("Published: ").append(date(entry.publishTimeSeconds * 1000L)).append('\n');
             if (entry.width > 0 && entry.height > 0) metadata.append("Resolution: ").append(entry.width).append(" × ").append(entry.height).append('\n');
             if (entry.durationMs > 0) metadata.append("Duration: ").append(duration(entry.durationMs / 1000L)).append('\n');
             if (!entry.videoMime.isEmpty()) metadata.append("Video: ").append(codec(entry.videoMime)).append('\n');
             if (!entry.audioMime.isEmpty()) metadata.append("Audio: ").append(codec(entry.audioMime)).append('\n');
-            if (album && !entry.postTitle.isEmpty()) metadata.append("Title: ").append(entry.postTitle).append('\n');
-            if (album && !entry.caption.isEmpty()) metadata.append("Caption: ").append(entry.caption).append('\n');
-            if (album && !entry.hashtags.isEmpty()) metadata.append("Hashtags: ").append(entry.hashtags).append('\n');
+            if (!entry.postTitle.isEmpty()) metadata.append("Title: ").append(entry.postTitle).append('\n');
+            if (!entry.caption.isEmpty()) metadata.append("Caption: ").append(entry.caption).append('\n');
+            if (!entry.hashtags.isEmpty()) metadata.append("Hashtags: ").append(entry.hashtags).append('\n');
             metadata.append("Started: ").append(date(entry.createdAt));
             if (entry.finishedAt > 0) metadata.append("\nFinished: ").append(date(entry.finishedAt));
             if ("complete".equals(entry.state)) metadata.append("\nSaved in: Downloads");
             details.setText(metadata.toString());
             error.setVisibility(entry.error.isEmpty() ? View.GONE : View.VISIBLE);
             error.setText(entry.error.isEmpty() ? "" : "Error: " + entry.error);
-            String tiktokUrl = entry.tiktokUrl();
-            tiktokLink.setVisibility(tiktokUrl.isEmpty() ? View.GONE : View.VISIBLE);
-            tiktokLink.setOnClickListener(v -> openTikTok(tiktokUrl));
+            String postUrl = entry.postUrl();
+            String appName = entry.fromInstagram() ? "Instagram" : "TikTok";
+            tiktokLink.setText("Open in " + appName + " ↗");
+            tiktokLink.setContentDescription("Open this post in " + appName);
+            tiktokLink.setVisibility(postUrl.isEmpty() ? View.GONE : View.VISIBLE);
+            tiktokLink.setOnClickListener(v -> openPost(postUrl, entry.fromInstagram()));
             if (entry.isActive() && !expanded) expanded = true;
             toggle.setText(expanded ? "Hide details ▲" : "Show details ▼");
             details.setVisibility(expanded ? View.VISIBLE : View.GONE);
@@ -316,8 +322,8 @@ final class DownloadsPage {
                 if (!photo.savedUri.isEmpty() && photo.sourceWidth > 0 && photo.sourceHeight > 0) {
                     boolean matches = PhotoQuality.matchesListed(photo.width, photo.height,
                         photo.sourceWidth, photo.sourceHeight);
-                    text(photoRow, matches ? "Matches TikTok's listed resolution" :
-                        "Below TikTok's listed " + photo.sourceWidth + " × " + photo.sourceHeight,
+                    text(photoRow, matches ? "Matches " + appName + "'s listed resolution" :
+                        "Below " + appName + "'s listed " + photo.sourceWidth + " × " + photo.sourceHeight,
                         12, matches ? ACCENT : ERROR, false, 2);
                 }
                 if (!photo.fileName.isEmpty()) text(photoRow, photo.fileName, 12, MUTED, false, 2);
@@ -374,15 +380,15 @@ final class DownloadsPage {
         }
     }
 
-    private void openTikTok(String url) {
+    private void openPost(String url, boolean instagram) {
         Intent open = new Intent(Intent.ACTION_VIEW, Uri.parse(url))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
-            activity.startActivity(new Intent(open).setPackage("com.zhiliaoapp.musically"));
+            activity.startActivity(new Intent(open).setPackage(instagram ? "com.instagram.android" : "com.zhiliaoapp.musically"));
         } catch (ActivityNotFoundException missingTikTok) {
             try { activity.startActivity(open); }
             catch (ActivityNotFoundException missingHandler) {
-                Toast.makeText(activity, "Could not open this TikTok post", Toast.LENGTH_LONG).show();
+                Toast.makeText(activity, "Could not open this post", Toast.LENGTH_LONG).show();
             }
         }
     }

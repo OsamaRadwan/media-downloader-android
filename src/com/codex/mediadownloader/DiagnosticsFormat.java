@@ -45,17 +45,21 @@ final class DiagnosticsFormat {
         return result.length() > 2048 ? result.substring(0, 2048) + "…" : result.toString();
     }
 
-    /** Only a public TikTok post or short-link path; query and fragment are never exported. */
+    /** Only supported public post paths; query and fragment are never exported. */
     static String publicPostUrl(String value) {
         try {
             URI uri = new URI(value);
             String host = uri.getHost();
             String path = uri.getRawPath();
-            if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null ||
-                !(host.equalsIgnoreCase("tiktok.com") || host.toLowerCase().endsWith(".tiktok.com")) ||
-                uri.getPort() != -1 || path == null || !path.matches("/[A-Za-z0-9@._/-]{1,220}"))
+            if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null || uri.getPort() != -1 || path == null)
                 return "unavailable";
-            return "https://" + host.toLowerCase() + path;
+            String domain = host.toLowerCase(java.util.Locale.ROOT);
+            boolean tiktok = (domain.equals("tiktok.com") || domain.endsWith(".tiktok.com")) &&
+                path.matches("/[A-Za-z0-9@._/-]{1,220}");
+            boolean instagram = (domain.equals("instagram.com") || domain.equals("www.instagram.com")) &&
+                (path.matches("/(p|reel|tv)/[A-Za-z0-9_-]{5,20}/?") ||
+                 path.matches("/stories/[A-Za-z0-9._]{1,40}/[0-9]{15,22}/?"));
+            return tiktok || instagram ? "https://" + domain + path : "unavailable";
         } catch (Exception error) { return "unavailable"; }
     }
 }
