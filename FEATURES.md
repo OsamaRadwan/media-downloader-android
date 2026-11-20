@@ -13,13 +13,14 @@ This document describes implemented features in terms that can be reused for add
 ## Button appearance and settings
 
 - The Settings page shows both a large icon preview and a live-size button at its actual screen position. Changes appear immediately in the preview and the floating control and persist across normal app relaunches.
-- Position controls: left or right side, vertical position, and distance from the screen border. TikTok, Instagram feed posts, opened Instagram Reels, RedNote photo posts, and RedNote videos have independent saved placement values. The live border preview can switch among them.
+- Position controls: left or right side, vertical position, and distance from the screen border. TikTok portrait posts, TikTok full-screen landscape videos, Instagram feed posts, opened Instagram Reels, RedNote photo posts, and RedNote videos have independent saved placement values. The live border preview can switch among them.
 - Appearance controls: button size, padding around the arrow, arrow color and opacity, optional background shape, background color, and background opacity. The background can be absent, circular, or rounded.
 - Four built-in transparent icon styles are available: solid, outline, simple, and tray. Users can also import transparent images from the phone, select or remove them, and keep up to 30 custom icons in app-private storage. Custom images retain their own colors.
 - Settings include permission status and links to Android's Accessibility, overlay, and notification settings, plus a reset action.
 
 ## Capturing and downloading media
 
+- In TikTok's rotated full-screen video view, the arrow remains visible and tappable. A tap briefly returns to that video's portrait post to use its Share control, copies a fresh link, starts the background transfer, then reopens the full-screen view. If the current post cannot be identified, it reports a failure rather than using a previous link.
 - The source integration identifies the current post and retrieves its account/profile name, account ID, video ID, publication time, caption, hashtags, thumbnail, and available playback URLs when those fields are supplied.
 - For public media, resolution uses a fresh anonymous web session separate from the source app's signed-in account. The transfer first requests each candidate without a Cookie header. A public, full-resolution candidate with valid media completes without sending visitor cookies. An access rejection, or a page returned in place of MP4, may retry that candidate with the resolver's own anonymous visitor cookies; rate limits do not trigger that retry. For albums, all public renditions of each photo are checked before a visitor retry is considered when their best decoded size is below the source-listed size. This limits account-linked traffic but cannot guarantee that a platform will not rate-limit or block requests.
 - A foreground download service transfers media independently of the source application's own save/download action. Up to **three** downloads can run at once.

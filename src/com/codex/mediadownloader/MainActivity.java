@@ -261,7 +261,7 @@ public class MainActivity extends Activity {
         section(page, "Live placement preview");
         RadioGroup placementPreview = new RadioGroup(this);
         placementPreview.setOrientation(RadioGroup.VERTICAL);
-        String[] placementNames = {"TikTok", "Instagram feed posts", "Instagram Reels",
+        String[] placementNames = {"TikTok", "TikTok full-screen landscape", "Instagram feed posts", "Instagram Reels",
             "RedNote photo posts", "RedNote videos"};
         OverlayPlacement[] placements = OverlayPlacement.values();
         for (int i = 0; i < placementNames.length; i++) {
@@ -288,6 +288,12 @@ public class MainActivity extends Activity {
         radioGroup(page, new String[]{"Left", "Right"}, OverlayOption.SIDE);
         slider(page, "Vertical position", OverlayOption.HEIGHT, "%");
         slider(page, "Distance from border", OverlayOption.SIDE_GAP, " dp");
+
+        section(page, "TikTok full-screen landscape placement");
+        addText(page, "Screen side", 15, TEXT, true, 12);
+        radioGroup(page, new String[]{"Left", "Right"}, OverlayOption.TIKTOK_LANDSCAPE_SIDE);
+        slider(page, "Vertical position", OverlayOption.TIKTOK_LANDSCAPE_HEIGHT, "%");
+        slider(page, "Distance from border", OverlayOption.TIKTOK_LANDSCAPE_GAP, " dp");
 
         section(page, "Instagram feed placement");
         addText(page, "Screen side", 15, TEXT, true, 12);
