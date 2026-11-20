@@ -2,6 +2,7 @@ package com.codex.mediadownloader;
 
 import android.content.Context;
 import android.content.res.ColorStateList;
+import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.WindowManager;
@@ -78,5 +79,21 @@ final class OverlaySettings {
         int usableHeight = context.getResources().getDisplayMetrics().heightPixels;
         int center = usableHeight * prefs.get(placement.height) / 100;
         params.y = Math.max(0, Math.min(usableHeight - params.height, center - params.height / 2));
+    }
+
+    static void placeLandscapeVideo(WindowManager.LayoutParams params, Context context,
+                                    OverlayPreferences prefs, Rect videoBounds) {
+        place(params, context, prefs, OverlayPlacement.TIKTOK_LANDSCAPE);
+        if (videoBounds == null || videoBounds.isEmpty()) return;
+        int screenWidth = context.getResources().getDisplayMetrics().widthPixels;
+        int screenHeight = context.getResources().getDisplayMetrics().heightPixels;
+        boolean right = prefs.get(OverlayOption.TIKTOK_LANDSCAPE_SIDE) == 1;
+        int left = OverlayGeometry.horizontal(screenWidth, videoBounds.left, videoBounds.right,
+            params.width, dp(context, prefs.get(OverlayOption.TIKTOK_LANDSCAPE_GAP)),
+            right);
+        params.gravity = (right ? Gravity.RIGHT : Gravity.LEFT) | Gravity.TOP;
+        params.x = right ? screenWidth - left - params.width : left;
+        params.y = OverlayGeometry.vertical(screenHeight, videoBounds.top, videoBounds.bottom,
+            params.height, prefs.get(OverlayOption.TIKTOK_LANDSCAPE_HEIGHT));
     }
 }

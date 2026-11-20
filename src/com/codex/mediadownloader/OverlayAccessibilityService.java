@@ -38,6 +38,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private boolean collecting;
     private String sourceApp = TIKTOK;
     private OverlayPlacement placement = OverlayPlacement.TIKTOK;
+    private Rect landscapeVideoBounds;
     private boolean returnToTikTokLandscape;
     private final Runnable visibilityCheck = this::syncVisibility;
 
@@ -98,7 +99,9 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                 return;
             }
             if (TIKTOK.equals(topApp)) {
-                showOverlay(TIKTOK, isLandscape() ? OverlayPlacement.TIKTOK_LANDSCAPE : OverlayPlacement.TIKTOK);
+                boolean landscape = isLandscape(root);
+                showOverlay(TIKTOK, landscape ? OverlayPlacement.TIKTOK_LANDSCAPE : OverlayPlacement.TIKTOK,
+                    landscape ? findTikTokVideoBounds(root) : null);
             } else if (INSTAGRAM.equals(topApp)) {
                 OverlayPlacement instagramPlacement = find(root, "Reels") != null && find(root, "Home") == null ?
                     OverlayPlacement.INSTAGRAM_REEL : OverlayPlacement.INSTAGRAM_FEED;
@@ -123,16 +126,23 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     }
 
     private void showOverlay(String app, OverlayPlacement newPlacement) {
+        showOverlay(app, newPlacement, null);
+    }
+
+    private void showOverlay(String app, OverlayPlacement newPlacement, Rect videoBounds) {
         if (overlay != null) {
-            if (!app.equals(sourceApp) || newPlacement != placement) {
+            if (!app.equals(sourceApp) || newPlacement != placement ||
+                !java.util.Objects.equals(landscapeVideoBounds, videoBounds)) {
                 sourceApp = app;
                 placement = newPlacement;
+                landscapeVideoBounds = videoBounds == null ? null : new Rect(videoBounds);
                 refreshOverlay();
             }
             return;
         }
         sourceApp = app;
         placement = newPlacement;
+        landscapeVideoBounds = videoBounds == null ? null : new Rect(videoBounds);
         // Use the application context so the window gets its own overlay token,
         // rather than inheriting this accessibility service's overlay token.
         windowManager = (WindowManager) getApplicationContext().getSystemService(WINDOW_SERVICE);
@@ -151,7 +161,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT);
-        OverlaySettings.place(params, this, settings, placement);
+        placeOverlay(params);
         try {
             windowManager.addView(icon, params);
         } catch (RuntimeException error) {
@@ -166,8 +176,14 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private void refreshOverlay() {
         if (overlay == null || overlayParams == null || settings == null) return;
         OverlaySettings.style(overlay, this, settings, customIcons);
-        OverlaySettings.place(overlayParams, this, settings, placement);
+        placeOverlay(overlayParams);
         windowManager.updateViewLayout(overlay, overlayParams);
+    }
+
+    private void placeOverlay(WindowManager.LayoutParams params) {
+        if (placement == OverlayPlacement.TIKTOK_LANDSCAPE)
+            OverlaySettings.placeLandscapeVideo(params, this, settings, landscapeVideoBounds);
+        else OverlaySettings.place(params, this, settings, placement);
     }
 
     private void hideOverlay() {
@@ -175,7 +191,46 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         windowManager.removeView(overlay);
         overlay = null;
         overlayParams = null;
+        landscapeVideoBounds = null;
     }
+
+    private Rect findTikTokVideoBounds(AccessibilityNodeInfo root) {
+        AccessibilityNodeInfo player = findNodeById(root, ":id/player_view");
+        if (player == null) return null;
+        Rect screenBounds = new Rect();
+        root.getBoundsInScreen(screenBounds);
+        Rect playerBounds = new Rect();
+        player.getBoundsInScreen(playerBounds);
+        if (playerBounds.isEmpty() || !screenBounds.contains(playerBounds)) return null;
+        Rect best = null;
+        long bestArea = Long.MAX_VALUE;
+        for (int i = 0; i < player.getChildCount(); i++) {
+            AccessibilityNodeInfo child = player.getChild(i);
+            if (child == null) continue;
+            Rect bounds = new Rect();
+            child.getBoundsInScreen(bounds);
+            long area = (long) bounds.width() * bounds.height();
+            if (bounds.width() >= playerBounds.width() / 4 &&
+                bounds.height() >= playerBounds.height() / 3 && area < bestArea &&
+                playerBounds.contains(bounds)) {
+                best = bounds;
+                bestArea = area;
+            }
+        }
+        return best == null ? playerBounds : best;
+    }
+
+    private AccessibilityNodeInfo findNodeById(AccessibilityNodeInfo root, String suffix) {
+        if (root == null) return null;
+        String id = root.getViewIdResourceName();
+        if (id != null && id.endsWith(suffix)) return root;
+        for (int i = 0; i < root.getChildCount(); i++) {
+            AccessibilityNodeInfo found = findNodeById(root.getChild(i), suffix);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
 
     @Override public void onClick(View view) {
         if (collecting) return;
@@ -186,7 +241,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         DiagnosticsStore.trace(this, "overlay.tap", "source=" +
             (root == null || root.getPackageName() == null ? "unavailable" : root.getPackageName()));
         String app = root == null || root.getPackageName() == null ? "" : root.getPackageName().toString();
-        if (TIKTOK.equals(app) && isLandscape()) {
+        if (TIKTOK.equals(app) && isLandscape(root)) {
             collecting = true;
             returnToTikTokLandscape = true;
             if (!performGlobalAction(GLOBAL_ACTION_BACK)) {
@@ -218,7 +273,12 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             INSTAGRAM.equals(app) ? 1000 : 600);
     }
 
-    private boolean isLandscape() {
+    private boolean isLandscape(AccessibilityNodeInfo root) {
+        if (root != null) {
+            Rect bounds = new Rect();
+            root.getBoundsInScreen(bounds);
+            if (!bounds.isEmpty()) return bounds.width() > bounds.height();
+        }
         return getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
     }
 
@@ -233,7 +293,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
 
     private void clickLandscapeTikTokShare(long deadline) {
         AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root != null && TIKTOK.equals(String.valueOf(root.getPackageName())) && !isLandscape() &&
+        if (root != null && TIKTOK.equals(String.valueOf(root.getPackageName())) && !isLandscape(root) &&
             find(root, "Full screen") != null) {
             AccessibilityNodeInfo action = clickableAncestor(findTikTokShare(root));
             if (action != null && action.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
@@ -367,7 +427,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private void restoreTikTokLandscape(long deadline) {
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null || !TIKTOK.equals(String.valueOf(root.getPackageName()))) return;
-        if (isLandscape()) return;
+        if (isLandscape(root)) return;
         AccessibilityNodeInfo fullScreen = clickableAncestor(find(root, "Full screen"));
         if (fullScreen != null && fullScreen.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             DiagnosticsStore.trace(this, "overlay.landscape", "Returned to full-screen post");

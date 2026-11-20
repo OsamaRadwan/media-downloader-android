@@ -12,6 +12,7 @@ $sources = @(
     'src\com\codex\mediadownloader\DownloadsState.java',
     'src\com\codex\mediadownloader\DownloadsController.java',
     'src\com\codex\mediadownloader\OverlayOption.java',
+    'src\com\codex\mediadownloader\OverlayGeometry.java',
     'src\com\codex\mediadownloader\Mp4SourceMetadata.java',
     'src\com\codex\mediadownloader\SourcePostUrl.java',
     'src\com\codex\mediadownloader\RedNoteVideoPolicy.java',

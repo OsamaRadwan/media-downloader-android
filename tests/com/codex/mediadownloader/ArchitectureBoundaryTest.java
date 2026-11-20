@@ -29,6 +29,14 @@ public final class ArchitectureBoundaryTest {
         check(OverlayOption.ICON_STYLE.validate(4) == 4, "Custom icon style is available");
         check(OverlayOption.ICON_STYLE.validate(99) == 4, "Icon style is bounded");
         check(OverlayOption.ARROW_COLOR.validate(0x00112233) == 0xff112233, "Opaque stored color");
+        check(OverlayGeometry.horizontal(2400, 240, 2160, 133, 18, true) == 2178,
+            "Right button uses the pillarbox beside a 16:9 video");
+        check(OverlayGeometry.horizontal(2400, 0, 2400, 133, 18, true) == 2249,
+            "A full-width video keeps the button just inside its border");
+        check(OverlayGeometry.horizontal(2400, 240, 2160, 133, 18, false) == 89,
+            "Left button uses the opposite pillarbox");
+        check(OverlayGeometry.vertical(1080, 0, 1080, 133, 50) == 474,
+            "Vertical placement scales with landscape height");
         check(item(4, "complete", "7708810139658128647", "").tiktokUrl().equals(
             "https://www.tiktok.com/@creator/video/7708810139658128647"), "Creator and video ID open the matching post");
         check(item(5, "failed", "", "https://vt.tiktok.com/example").tiktokUrl().equals(
