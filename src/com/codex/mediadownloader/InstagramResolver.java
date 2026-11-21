@@ -16,6 +16,7 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Iterator;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -26,6 +27,10 @@ import org.json.JSONObject;
 final class InstagramResolver {
     private static final long INSTAGRAM_EPOCH_MS = 1314220021721L;
     private static final int MAX_PAGE_BYTES = 2_000_000;
+    private static final String MODERN_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
+    private static final Pattern DATA_SJS = Pattern.compile("<script\\b[^>]*\\bdata-sjs[^>]*>(\\{.*?\\})</script>",
+        Pattern.DOTALL);
 
     private InstagramResolver() { }
 
@@ -55,7 +60,11 @@ final class InstagramResolver {
             // signed renditions. Bind that image to the shortcode via ig_cache_key;
             // other images on the page may belong to suggested posts.
             String profile = singlePhotoProfile(html, code);
-            if (profile == null) throw new Exception("Instagram did not expose public media details for this post");
+            if (profile == null) {
+                result = resolveModern(canonical, code, trace);
+                trace(trace, "instagram.resolved", "kind=video streams=" + result.candidates.size());
+                return result;
+            }
             String postId = idFromShortcode(code);
             String accountId = "";
             String caption = "";
@@ -85,11 +94,108 @@ final class InstagramResolver {
             }
             result = parseSinglePhoto(html, accountId, caption, canonical, code);
         } else {
-            throw new Exception("Instagram did not expose public media details for this Reel");
+            result = resolveModern(canonical, code, trace);
         }
         trace(trace, "instagram.resolved", "kind=" + (result.isAlbum() ? "photos" : "video") +
             " photos=" + result.photos.size() + " streams=" + result.candidates.size());
         return result;
+    }
+
+    private static StreamResolver.Result resolveModern(String canonical, String code,
+            StreamResolver.Trace trace) throws Exception {
+        try {
+            return parseModern(fetchModern(canonical, trace), canonical, code, trace);
+        } catch (Exception first) {
+            if (canonical.contains("/p/") || String.valueOf(first.getMessage()).contains("HTTP 429")) throw first;
+            // Instagram's post route can expose the same Reel data when its Reel route
+            // returns only the application shell. The shortcode and numeric ID must match.
+            String postRoute = "https://www.instagram.com/p/" + code + "/";
+            trace(trace, "instagram.modern", "retrying_post_route=true");
+            try { return parseModern(fetchModern(postRoute, trace), canonical, code, trace); }
+            catch (Exception second) { second.addSuppressed(first); throw second; }
+        }
+    }
+
+    private static StreamResolver.Result parseModern(String html, String canonical, String code,
+            StreamResolver.Trace trace) throws Exception {
+        String postId = idFromShortcode(code);
+        trace(trace, "instagram.modern_page", "bytes=" + html.length() +
+            " mediaRef=" + html.contains("xig_polaris_media") +
+            " versionsRef=" + html.contains("video_versions"));
+        Log.d("MediaDownloader", "Instagram modern page chars=" + html.length() +
+            " mediaRef=" + html.contains("xig_polaris_media") +
+            " versionsRef=" + html.contains("video_versions"));
+        Matcher scripts = DATA_SJS.matcher(html);
+        JSONObject product = null;
+        int count = 0;
+        while (scripts.find() && count++ < 80) {
+            try {
+                product = findModernProduct(new JSONObject(scripts.group(1)), code, postId, 0);
+                if (product != null) break;
+            } catch (org.json.JSONException ignored) { /* Other script blocks are not post data. */ }
+        }
+        if (product == null) throw new Exception("Instagram did not expose public media details for this post");
+        JSONObject user = product.optJSONObject("user");
+        String profile = user == null ? "" : user.optString("username", "");
+        String account = user == null ? "" : user.optString("pk", user.optString("id", ""));
+        if (!profile.matches("[A-Za-z0-9._]{1,40}") || !account.matches("[0-9]{1,24}"))
+            throw new Exception("Instagram did not provide a valid video owner");
+        long published = product.optLong("taken_at", 0);
+        if (published < 1262304000L || published > System.currentTimeMillis() / 1000L + 86400L)
+            throw new Exception("Instagram did not provide a valid video publish time");
+        JSONObject caption = product.optJSONObject("caption");
+        PostText postText = PostText.from("", caption == null ? "" : caption.optString("text", ""),
+            Collections.emptyList());
+        List<StreamResolver.Candidate> videos = new ArrayList<>();
+        JSONArray versions = product.optJSONArray("video_versions");
+        if (versions != null) for (int i = versions.length() - 1; i >= 0; i--) {
+            JSONObject version = versions.optJSONObject(i);
+            if (version == null) continue;
+            String url = version.optString("url", "");
+            if (https(url)) videos.add(new StreamResolver.Candidate(url,
+                version.optInt("width", 0), version.optInt("height", 0), 0,
+                "instagram-modern-" + version.optString("type", Integer.toString(i))));
+        }
+        if (videos.isEmpty()) throw new Exception("Instagram did not expose a direct video stream");
+        String cover = product.optString("display_uri", "");
+        if (!https(cover)) {
+            JSONObject image = product.optJSONObject("image_versions2");
+            JSONArray candidates = image == null ? null : image.optJSONArray("candidates");
+            JSONObject first = candidates == null ? null : candidates.optJSONObject(0);
+            cover = first == null ? "" : first.optString("url", "");
+            if (!https(cover)) cover = "";
+        }
+        trace(trace, "instagram.modern", "matched=true streams=" + videos.size() +
+            " listed=" + product.optInt("original_width", 0) + "x" + product.optInt("original_height", 0));
+        return new StreamResolver.Result(profile, account, postId, cover, canonical, postText,
+            published, videos, new ArrayList<>(), new CookieManager(null, CookiePolicy.ACCEPT_NONE), "instagram");
+    }
+
+    private static JSONObject findModernProduct(Object node, String code, String postId, int depth) {
+        if (depth > 40) return null;
+        if (node instanceof JSONObject) {
+            JSONObject json = (JSONObject) node;
+            JSONObject media = json.optJSONObject("xig_polaris_media");
+            JSONObject product = media == null ? null : media.optJSONObject("if_not_gated_logged_out");
+            if (product != null && code.equals(product.optString("code")) &&
+                postId.equals(product.optString("pk"))) return product;
+            Iterator<String> keys = json.keys();
+            while (keys.hasNext()) {
+                JSONObject found = findModernProduct(json.opt(keys.next()), code, postId, depth + 1);
+                if (found != null) return found;
+            }
+        } else if (node instanceof JSONArray) {
+            JSONArray array = (JSONArray) node;
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject found = findModernProduct(array.opt(i), code, postId, depth + 1);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private static String fetchModern(String url, StreamResolver.Trace trace) throws Exception {
+        return fetchPage(url, MODERN_USER_AGENT, trace, true);
     }
 
     /** A Story is resolved by its own ID. Never substitute an embedded/shared post. */
@@ -214,6 +320,8 @@ final class InstagramResolver {
         long id;
         try { id = Long.parseLong(mediaId); }
         catch (NumberFormatException error) { throw new Exception("Instagram did not provide a numeric post ID"); }
+        if (!mediaId.equals(idFromShortcode(code)))
+            throw new Exception("Instagram returned media for a different post");
         long published = (id >>> 23) + INSTAGRAM_EPOCH_MS;
         if (published < 1262304000000L || published > System.currentTimeMillis() + 86400000L)
             throw new Exception("Instagram post ID has an invalid publish time");
@@ -386,6 +494,11 @@ final class InstagramResolver {
     }
 
     private static String fetch(String url, String agent, StreamResolver.Trace trace) throws Exception {
+        return fetchPage(url, agent, trace, false);
+    }
+
+    private static String fetchPage(String url, String agent, StreamResolver.Trace trace,
+            boolean modern) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
         try {
             connection.setConnectTimeout(15000);
@@ -393,10 +506,14 @@ final class InstagramResolver {
             // Instagram's legacy public embed currently serves structured media for this
             // minimal browser identity; a current desktop Chrome identity gets the app shell.
             connection.setRequestProperty("User-Agent", agent);
-            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml");
-            connection.setRequestProperty("Accept-Language", "en-US,en;q=0.9");
+            connection.setRequestProperty("Accept", modern ?
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" :
+                "text/html,application/xhtml+xml");
+            connection.setRequestProperty("Accept-Language", modern ? "en-us,en;q=0.5" : "en-US,en;q=0.9");
+            if (modern) connection.setRequestProperty("Sec-Fetch-Mode", "navigate");
             int status = connection.getResponseCode();
-            trace(trace, "instagram.embed", "http=" + status + " bytes=" + connection.getContentLengthLong());
+            trace(trace, modern ? "instagram.page" : "instagram.embed",
+                "http=" + status + " bytes=" + connection.getContentLengthLong());
             if (status != 200) throw new Exception("Instagram public post returned HTTP " + status);
             try (InputStream input = connection.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
                 byte[] buffer = new byte[32768];

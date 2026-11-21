@@ -501,18 +501,35 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         java.util.ArrayList<AccessibilityNodeInfo> candidates = new java.util.ArrayList<>();
         collectShare(root, candidates);
         if (candidates.isEmpty()) return null;
-        int middle = getResources().getDisplayMetrics().heightPixels / 2;
+        Rect screen = new Rect();
+        root.getBoundsInScreen(screen);
+        int middle = screen.centerY();
         AccessibilityNodeInfo best = null;
         int bestDistance = Integer.MAX_VALUE;
+        boolean bestIsReel = false;
         Rect bounds = new Rect();
         for (AccessibilityNodeInfo candidate : candidates) {
             candidate.getBoundsInScreen(bounds);
-            // On a scrolling feed, the previous post's controls may remain at the top
-            // while the next post fills the screen. Never select that previous post.
-            if (bounds.centerY() < middle) continue;
+            String label = String.valueOf(candidate.getContentDescription());
+            boolean reelRail = label.equals("Share") &&
+                bounds.centerX() >= screen.left + screen.width() * 4 / 5 &&
+                bounds.centerY() >= screen.top + screen.height() * 3 / 5;
+            boolean feedRow = (label.startsWith("Send post.") || label.startsWith("Send reel.")) &&
+                bounds.centerX() <= screen.left + screen.width() * 3 / 4 &&
+                bounds.centerY() >= screen.top + screen.height() * 3 / 5;
+            if (!reelRail && !feedRow) continue;
             int distance = Math.abs(bounds.centerY() - middle);
-            if (distance < bestDistance) { best = candidate; bestDistance = distance; }
+            // The full-screen Reel rail wins over any feed row left in the tree.
+            if (best == null || (reelRail && !bestIsReel) ||
+                (reelRail == bestIsReel && distance < bestDistance)) {
+                best = candidate;
+                bestDistance = distance;
+                bestIsReel = reelRail;
+            }
         }
+        Log.d("MediaDownloader", "Instagram share target=" +
+            (best == null ? "none" : bestIsReel ? "opened-reel" : "feed") +
+            " candidates=" + candidates.size());
         return best;
     }
 
