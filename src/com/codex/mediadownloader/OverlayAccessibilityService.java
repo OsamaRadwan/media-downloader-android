@@ -39,6 +39,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private String sourceApp = TIKTOK;
     private OverlayPlacement placement = OverlayPlacement.TIKTOK;
     private Rect landscapeVideoBounds;
+    private Rect tiktokScreenBounds;
     private boolean landscapeCapture;
     private boolean visibilityCheckQueued;
     private boolean visibilityCheckImmediate;
@@ -113,8 +114,10 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             }
             if (TIKTOK.equals(topApp)) {
                 boolean landscape = isLandscape(root);
+                Rect screen = new Rect();
+                root.getBoundsInScreen(screen);
                 showOverlay(TIKTOK, landscape ? OverlayPlacement.TIKTOK_LANDSCAPE : OverlayPlacement.TIKTOK,
-                    landscape ? findTikTokVideoBounds(root) : null);
+                    landscape ? findTikTokVideoBounds(root) : null, screen);
             } else if (INSTAGRAM.equals(topApp)) {
                 OverlayPlacement instagramPlacement = find(root, "Reels") != null && find(root, "Home") == null ?
                     OverlayPlacement.INSTAGRAM_REEL : OverlayPlacement.INSTAGRAM_FEED;
@@ -139,16 +142,25 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     }
 
     private void showOverlay(String app, OverlayPlacement newPlacement) {
-        showOverlay(app, newPlacement, null);
+        showOverlay(app, newPlacement, null, null);
     }
 
-    private void showOverlay(String app, OverlayPlacement newPlacement, Rect videoBounds) {
+    private void showOverlay(String app, OverlayPlacement newPlacement, Rect videoBounds, Rect screenBounds) {
+        // A display rotation can leave the old overlay surface visible to WindowManager
+        // but empty on screen. Give portrait and landscape their own fresh view surface.
+        if (overlay != null && TIKTOK.equals(app) && TIKTOK.equals(sourceApp) &&
+            newPlacement != placement &&
+            (newPlacement == OverlayPlacement.TIKTOK || newPlacement == OverlayPlacement.TIKTOK_LANDSCAPE)) {
+            hideOverlay();
+        }
         if (overlay != null) {
             if (!app.equals(sourceApp) || newPlacement != placement ||
-                !java.util.Objects.equals(landscapeVideoBounds, videoBounds)) {
+                !java.util.Objects.equals(landscapeVideoBounds, videoBounds) ||
+                !java.util.Objects.equals(tiktokScreenBounds, screenBounds)) {
                 sourceApp = app;
                 placement = newPlacement;
                 landscapeVideoBounds = videoBounds == null ? null : new Rect(videoBounds);
+                tiktokScreenBounds = screenBounds == null ? null : new Rect(screenBounds);
                 refreshOverlay();
             }
             return;
@@ -156,6 +168,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         sourceApp = app;
         placement = newPlacement;
         landscapeVideoBounds = videoBounds == null ? null : new Rect(videoBounds);
+        tiktokScreenBounds = screenBounds == null ? null : new Rect(screenBounds);
         // Use the application context so the window gets its own overlay token,
         // rather than inheriting this accessibility service's overlay token.
         windowManager = (WindowManager) getApplicationContext().getSystemService(WINDOW_SERVICE);
@@ -194,8 +207,13 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     }
 
     private void placeOverlay(WindowManager.LayoutParams params) {
-        if (placement == OverlayPlacement.TIKTOK_LANDSCAPE)
-            OverlaySettings.placeLandscapeVideo(params, this, settings, landscapeVideoBounds);
+        if (placement == OverlayPlacement.TIKTOK_LANDSCAPE && tiktokScreenBounds != null &&
+            !tiktokScreenBounds.isEmpty())
+            OverlaySettings.placeLandscapeVideo(params, this, settings, landscapeVideoBounds,
+                tiktokScreenBounds.width(), tiktokScreenBounds.height());
+        else if (placement == OverlayPlacement.TIKTOK && tiktokScreenBounds != null &&
+            !tiktokScreenBounds.isEmpty())
+            OverlaySettings.place(params, this, settings, placement, tiktokScreenBounds.height());
         else OverlaySettings.place(params, this, settings, placement);
     }
 
@@ -205,6 +223,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         overlay = null;
         overlayParams = null;
         landscapeVideoBounds = null;
+        tiktokScreenBounds = null;
     }
 
     private Rect findTikTokVideoBounds(AccessibilityNodeInfo root) {

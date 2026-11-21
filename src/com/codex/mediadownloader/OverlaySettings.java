@@ -71,22 +71,33 @@ final class OverlaySettings {
 
     static void place(WindowManager.LayoutParams params, Context context, OverlayPreferences prefs,
                       OverlayPlacement placement) {
+        place(params, context, prefs, placement,
+            context.getResources().getDisplayMetrics().heightPixels);
+    }
+
+    static void place(WindowManager.LayoutParams params, Context context, OverlayPreferences prefs,
+                      OverlayPlacement placement, int usableHeight) {
         int size = prefs.get(OverlayOption.SIZE);
         params.width = dp(context, size);
         params.height = dp(context, size);
         params.gravity = (prefs.get(placement.side) == 0 ? Gravity.LEFT : Gravity.RIGHT) | Gravity.TOP;
         params.x = dp(context, prefs.get(placement.gap));
-        int usableHeight = context.getResources().getDisplayMetrics().heightPixels;
         int center = usableHeight * prefs.get(placement.height) / 100;
         params.y = Math.max(0, Math.min(usableHeight - params.height, center - params.height / 2));
     }
 
     static void placeLandscapeVideo(WindowManager.LayoutParams params, Context context,
                                     OverlayPreferences prefs, Rect videoBounds) {
-        place(params, context, prefs, OverlayPlacement.TIKTOK_LANDSCAPE);
+        placeLandscapeVideo(params, context, prefs, videoBounds,
+            context.getResources().getDisplayMetrics().widthPixels,
+            context.getResources().getDisplayMetrics().heightPixels);
+    }
+
+    static void placeLandscapeVideo(WindowManager.LayoutParams params, Context context,
+                                    OverlayPreferences prefs, Rect videoBounds,
+                                    int screenWidth, int screenHeight) {
+        place(params, context, prefs, OverlayPlacement.TIKTOK_LANDSCAPE, screenHeight);
         if (videoBounds == null || videoBounds.isEmpty()) return;
-        int screenWidth = context.getResources().getDisplayMetrics().widthPixels;
-        int screenHeight = context.getResources().getDisplayMetrics().heightPixels;
         boolean right = prefs.get(OverlayOption.TIKTOK_LANDSCAPE_SIDE) == 1;
         int left = OverlayGeometry.horizontal(screenWidth, videoBounds.left, videoBounds.right,
             params.width, dp(context, prefs.get(OverlayOption.TIKTOK_LANDSCAPE_GAP)),
