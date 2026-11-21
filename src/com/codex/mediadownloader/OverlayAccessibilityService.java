@@ -446,9 +446,16 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             Intent intent = new Intent(this, DownloadService.class);
             intent.putExtra("shareUrl", shareUrl);
             startForegroundService(intent);
-            boolean shareSheetOpen = findActionInWindows("Copy link") != null;
+            boolean shareSheetOpen = INSTAGRAM.equals(app) ? isInstagramShareSheetOpen() :
+                findActionInWindows("Copy link") != null;
+            if (INSTAGRAM.equals(app))
+                Log.d("MediaDownloader", "Instagram share sheet open after copy=" + shareSheetOpen);
             finishCollecting();
-            if (shareSheetOpen) performGlobalAction(GLOBAL_ACTION_BACK);
+            if (shareSheetOpen) {
+                if (INSTAGRAM.equals(app))
+                    handler.postDelayed(this::dismissInstagramShareSheet, 250);
+                else performGlobalAction(GLOBAL_ACTION_BACK);
+            }
         } catch (Exception error) { failCollecting(error); }
     }
 
@@ -456,9 +463,14 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         DiagnosticsStore.record(this, "overlay.start_download", error);
         Log.e("MediaDownloader", "Could not start download", error);
         Toast.makeText(this, "Could not start download: " + error.getMessage(), Toast.LENGTH_LONG).show();
-        boolean closeLandscapeShare = landscapeCapture && findActionInWindows("Copy link") != null;
+        boolean closeShareSheet = (landscapeCapture && findActionInWindows("Copy link") != null) ||
+            (INSTAGRAM.equals(sourceApp) && isInstagramShareSheetOpen());
+        boolean instagramCapture = INSTAGRAM.equals(sourceApp);
         finishCollecting();
-        if (closeLandscapeShare) performGlobalAction(GLOBAL_ACTION_BACK);
+        if (closeShareSheet) {
+            if (instagramCapture) handler.postDelayed(this::dismissInstagramShareSheet, 250);
+            else performGlobalAction(GLOBAL_ACTION_BACK);
+        }
     }
 
     private void finishCollecting() {
@@ -555,6 +567,38 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             if (action != null) return action;
         }
         return null;
+    }
+
+    private boolean isInstagramShareSheetOpen() {
+        for (AccessibilityWindowInfo window : getWindows()) {
+            AccessibilityNodeInfo root = window.getRoot();
+            if (root == null || !INSTAGRAM.equals(String.valueOf(root.getPackageName()))) continue;
+            if (findAction(root, "Copy link") != null) return true;
+            Rect screen = new Rect();
+            root.getBoundsInScreen(screen);
+            if (hasLowerSearchField(root, screen.top + screen.height() / 3)) return true;
+        }
+        return false;
+    }
+
+    private void dismissInstagramShareSheet() {
+        boolean sent = performGlobalAction(GLOBAL_ACTION_BACK);
+        Log.d("MediaDownloader", "Closing Instagram share sheet actionSent=" + sent);
+    }
+
+    private boolean hasLowerSearchField(AccessibilityNodeInfo node, int minimumY) {
+        if (node == null || !node.isVisibleToUser()) return false;
+        CharSequence text = node.getText();
+        CharSequence description = node.getContentDescription();
+        if ((text != null && text.toString().startsWith("Search")) ||
+            (description != null && description.toString().startsWith("Search"))) {
+            Rect bounds = new Rect();
+            node.getBoundsInScreen(bounds);
+            if (bounds.top >= minimumY) return true;
+        }
+        for (int i = 0; i < node.getChildCount(); i++)
+            if (hasLowerSearchField(node.getChild(i), minimumY)) return true;
+        return false;
     }
 
     private AccessibilityNodeInfo findAction(AccessibilityNodeInfo root, String needle) {
