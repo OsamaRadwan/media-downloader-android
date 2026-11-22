@@ -96,6 +96,31 @@ public final class StreamResolver {
         }
     }
 
+    static final class Identity {
+        final String accountId;
+        final String postId;
+        final String displayName;
+        Identity(String accountId, String postId, String displayName) {
+            this.accountId = accountId;
+            this.postId = postId;
+            this.displayName = displayName;
+        }
+    }
+
+    static Identity identity(String shareUrl, Trace trace) throws Exception {
+        CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
+        JSONObject item = itemFromPage(fetchText(shareUrl, null, DESKTOP, cookies, trace),
+            "webapp.reflow.video.detail");
+        String postId = item.optString("id", "");
+        JSONObject author = item.optJSONObject("author");
+        String accountId = author == null ? "" : author.optString("id", "");
+        if (accountId.isEmpty()) accountId = item.optString("authorId", "");
+        if (!postId.matches("[0-9]{15,22}") || !accountId.matches("[0-9]{6,24}"))
+            throw new Exception("Story link did not identify a public post and account");
+        return new Identity(accountId, postId,
+            author == null ? "" : author.optString("nickname", "").trim());
+    }
+
     public static Result resolve(String shareUrl, Trace trace) throws Exception {
         CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
         String videoId = idFromUrl(shareUrl);

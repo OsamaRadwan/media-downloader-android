@@ -10,12 +10,15 @@ import android.net.Uri;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.Path;
+import android.graphics.Bitmap;
+import android.hardware.HardwareBuffer;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import android.view.Gravity;
+import android.view.Display;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
@@ -24,6 +27,10 @@ import android.view.accessibility.AccessibilityWindowInfo;
 import android.widget.ImageView;
 import android.widget.Toast;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class OverlayAccessibilityService extends AccessibilityService implements View.OnClickListener {
     private static final String TIKTOK = "com.zhiliaoapp.musically";
@@ -43,6 +50,11 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private boolean landscapeCapture;
     private boolean visibilityCheckQueued;
     private boolean visibilityCheckImmediate;
+    private TikTokStoryBatch storyBatch;
+    private int storyScanPass;
+    private int storyDirectionCaptures;
+    private boolean storyScanningBackward;
+    private final ExecutorService storyValidation = Executors.newSingleThreadExecutor();
     private final Runnable visibilityCheck = () -> {
         visibilityCheckQueued = false;
         visibilityCheckImmediate = false;
@@ -70,11 +82,13 @@ public class OverlayAccessibilityService extends AccessibilityService implements
 
     @Override public void onInterrupt() { }
     @Override public void onDestroy() {
+        storyBatch = null;
         handler.removeCallbacks(visibilityCheck);
         visibilityCheckQueued = false;
         visibilityCheckImmediate = false;
         if (settings != null) settings.stopObserving();
         hideOverlay();
+        storyValidation.shutdownNow();
         super.onDestroy();
     }
 
@@ -288,7 +302,11 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             return;
         }
         AccessibilityNodeInfo share = null;
+        AccessibilityNodeInfo story = null;
+        boolean tiktokStory = false;
         if (TIKTOK.equals(app)) {
+            story = findNodeById(root, ":id/vp_story_immersive_feed");
+            tiktokStory = story != null && story.isVisibleToUser();
             share = findTikTokShare(root);
         } else if (INSTAGRAM.equals(app)) {
             share = findShare(root);
@@ -296,9 +314,25 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             share = findRedNoteShare(root);
         }
         AccessibilityNodeInfo action = clickableAncestor(share);
-        if (action == null || !action.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+        if (action == null) {
             Log.d("MediaDownloader", "No actionable share control in the active post; found=" + (share != null));
             DiagnosticsStore.record(this, "overlay.share", "Share action unavailable on current post");
+            Toast.makeText(this, "Open a post first", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (tiktokStory) {
+            AccessibilityNodeInfo title = findNodeById(root, ":id/title");
+            String account = title == null || title.getText() == null ? "" : title.getText().toString();
+            if (account.trim().isEmpty()) {
+                Toast.makeText(this, "Could not identify the Story account", Toast.LENGTH_LONG).show();
+                return;
+            }
+            collecting = true;
+            Toast.makeText(this, "Collecting this account's Stories", Toast.LENGTH_SHORT).show();
+            readTikTokStorySegments(account);
+            return;
+        }
+        if (!action.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             Toast.makeText(this, "Open a post first", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -467,6 +501,19 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             Log.i("MediaDownloader", "Fresh post link copied at " + copiedAt);
             DiagnosticsStore.trace(this, "overlay.fresh_link", "host=" + host +
                 " clipboardAgeMs=" + Math.max(0, System.currentTimeMillis() - copiedAt));
+            if (storyBatch != null) {
+                releaseOverlayFocus();
+                storyBatch.captured(shareUrl);
+                storyDirectionCaptures++;
+                Log.d("MediaDownloader", "Story batch captured item=" + storyBatch.links().size() +
+                    " direction=" + (storyScanningBackward ? "backward" : "forward"));
+                if (findActionInWindows("Copy link") != null ||
+                    findActionInWindows("Send to") != null)
+                    performGlobalAction(GLOBAL_ACTION_BACK);
+                if (storyDirectionCaptures >= storyBatch.segmentCount()) finishTikTokStoryDirection();
+                else handler.postDelayed(this::navigateTikTokStory, 150);
+                return;
+            }
             Intent intent = new Intent(this, DownloadService.class);
             intent.putExtra("shareUrl", shareUrl);
             startForegroundService(intent);
@@ -486,6 +533,17 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private void failCollecting(Exception error) {
         DiagnosticsStore.record(this, "overlay.start_download", error);
         Log.e("MediaDownloader", "Could not start download", error);
+        if (storyBatch != null) {
+            int captured = storyBatch.links().size();
+            storyBatch = null;
+            releaseOverlayFocus();
+            if (findActionInWindows("Copy link") != null || findActionInWindows("Send to") != null)
+                performGlobalAction(GLOBAL_ACTION_BACK);
+            finishCollecting();
+            Toast.makeText(this, "Story collection stopped after " + captured +
+                ". No downloads started: " + error.getMessage(), Toast.LENGTH_LONG).show();
+            return;
+        }
         Toast.makeText(this, "Could not start download: " + error.getMessage(), Toast.LENGTH_LONG).show();
         boolean closeShareSheet = (landscapeCapture && findActionInWindows("Copy link") != null) ||
             (INSTAGRAM.equals(sourceApp) && isInstagramShareSheetOpen());
@@ -498,14 +556,263 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     }
 
     private void finishCollecting() {
+        releaseOverlayFocus();
+        collecting = false;
+        landscapeCapture = false;
+        scheduleVisibilityCheck();
+    }
+
+    private void releaseOverlayFocus() {
         if (overlay != null && overlayParams != null) {
             overlayParams.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
             windowManager.updateViewLayout(overlay, overlayParams);
             overlay.setFocusableInTouchMode(false);
         }
-        collecting = false;
-        landscapeCapture = false;
-        scheduleVisibilityCheck();
+    }
+
+    private void readTikTokStorySegments(String account) {
+        takeScreenshot(Display.DEFAULT_DISPLAY, getMainExecutor(), new TakeScreenshotCallback() {
+            @Override public void onSuccess(ScreenshotResult result) {
+                HardwareBuffer buffer = result.getHardwareBuffer();
+                try {
+                    Bitmap hardware = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
+                    if (hardware == null) throw new Exception("Story screenshot is unavailable");
+                    Bitmap pixels = hardware.copy(Bitmap.Config.ARGB_8888, false);
+                    hardware.recycle();
+                    if (pixels == null) throw new Exception("Story pixels are unavailable");
+                    AccessibilityNodeInfo root = getRootInActiveWindow();
+                    AccessibilityNodeInfo progress = findNodeById(root, ":id/ina");
+                    if (progress == null) throw new Exception("Story progress strip is unavailable");
+                    Rect bounds = new Rect();
+                    progress.getBoundsInScreen(bounds);
+                    int[] row = new int[pixels.getWidth()];
+                    int[] above = new int[row.length];
+                    int[] below = new int[row.length];
+                    pixels.getPixels(above, 0, row.length, 0, bounds.top - 5, row.length, 1);
+                    pixels.getPixels(row, 0, row.length, 0, bounds.centerY(), row.length, 1);
+                    pixels.getPixels(below, 0, row.length, 0, bounds.bottom + 5, row.length, 1);
+                    pixels.recycle();
+                    List<Integer> centers = StoryProgressBar.centers(above, row, below);
+                    Log.i("MediaDownloader", "Story progress pixels=" + row.length +
+                        " y=" + bounds.centerY() + " samples=" +
+                        Integer.toHexString(row[row.length / 20]) + "," +
+                        Integer.toHexString(row[row.length / 2]) + "," +
+                        Integer.toHexString(row[row.length * 19 / 20]) +
+                        " segments=" + centers.size());
+                    storyBatch = new TikTokStoryBatch(account, centers);
+                    storyScanPass = 1;
+                    storyDirectionCaptures = 0;
+                    storyScanningBackward = false;
+                    Log.i("MediaDownloader", "Story segments=" + storyBatch.segmentCount());
+                    pauseTikTokStoryThenShare();
+                } catch (Exception error) { failCollecting(error); }
+                finally { buffer.close(); }
+            }
+            @Override public void onFailure(int errorCode) {
+                failCollecting(new Exception("Story screenshot failed (" + errorCode + ")"));
+            }
+        });
+    }
+
+    private void navigateTikTokStory() {
+        if (storyBatch == null) return;
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        AccessibilityNodeInfo story = findNodeById(root, ":id/vp_story_immersive_feed");
+        AccessibilityNodeInfo title = findNodeById(root, ":id/title");
+        String account = title == null || title.getText() == null ? "" : title.getText().toString();
+        if (root == null || !TIKTOK.equals(String.valueOf(root.getPackageName())) ||
+            story == null || !story.isVisibleToUser() || !storyBatch.isSameTitle(account)) {
+            finishTikTokStoryDirection();
+            return;
+        }
+        Rect screen = new Rect();
+        root.getBoundsInScreen(screen);
+        Path path = new Path();
+        path.moveTo(screen.left + screen.width() * (storyScanningBackward ? 12 : 88) / 100,
+            screen.top + screen.height() / 3);
+        android.accessibilityservice.GestureDescription gesture =
+            new android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 60))
+                .build();
+        if (!dispatchGesture(gesture, new GestureResultCallback() {
+            @Override public void onCompleted(android.accessibilityservice.GestureDescription ignored) {
+                pauseTikTokStoryThenShare();
+            }
+            @Override public void onCancelled(android.accessibilityservice.GestureDescription ignored) {
+                failCollecting(new Exception("Could not navigate the Story player"));
+            }
+        }, handler)) failCollecting(new Exception("Could not navigate the Story player"));
+    }
+
+    private void pauseTikTokStoryThenShare() {
+        if (storyBatch == null) return;
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null || findNodeById(root, ":id/vp_story_immersive_feed") == null) {
+            finishTikTokStoryDirection();
+            return;
+        }
+        Rect screen = new Rect();
+        root.getBoundsInScreen(screen);
+        Path path = new Path();
+        path.moveTo(screen.centerX(), screen.top + screen.height() / 3);
+        android.accessibilityservice.GestureDescription hold =
+            new android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 5000))
+                .build();
+        if (!dispatchGesture(hold, null, handler)) {
+            failCollecting(new Exception("Could not pause the Story player"));
+            return;
+        }
+        handler.postDelayed(() -> openNextTikTokStoryShare(System.currentTimeMillis() + 1500), 300);
+    }
+
+    private void openNextTikTokStoryShare(long deadline) {
+        if (storyBatch == null) return;
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        AccessibilityNodeInfo story = findNodeById(root, ":id/vp_story_immersive_feed");
+        AccessibilityNodeInfo title = findNodeById(root, ":id/title");
+        String account = title == null || title.getText() == null ? "" : title.getText().toString();
+        if (root == null || !TIKTOK.equals(String.valueOf(root.getPackageName())) ||
+            story == null || !story.isVisibleToUser() || account.isEmpty()) {
+            if (System.currentTimeMillis() < deadline) {
+                handler.postDelayed(() -> openNextTikTokStoryShare(deadline), 150);
+                return;
+            }
+            finishTikTokStoryDirection();
+            return;
+        }
+        if (!storyBatch.isSameTitle(account)) {
+            finishTikTokStoryDirection();
+            return;
+        }
+        Rect screen = new Rect();
+        root.getBoundsInScreen(screen);
+        AccessibilityNodeInfo action = clickableAncestor(findTikTokStoryShare(root, screen));
+        if (action != null && action.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            handler.postDelayed(() -> clickCopyWhenReady(TIKTOK, System.currentTimeMillis() + 4000), 600);
+            return;
+        }
+        if (System.currentTimeMillis() < deadline) {
+            handler.postDelayed(() -> openNextTikTokStoryShare(deadline), 150);
+            return;
+        }
+        failCollecting(new Exception("Could not share the next Story"));
+    }
+
+    private void finishTikTokStoryDirection() {
+        if (storyBatch == null) return;
+        if (storyScanningBackward || storyBatch.segmentCount() == 1) {
+            finishTikTokStoryBatch();
+            return;
+        }
+        storyScanningBackward = true;
+        storyDirectionCaptures = 0;
+        Log.i("MediaDownloader", "Story scan switching to backward pass");
+        handler.postDelayed(() -> {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            AccessibilityNodeInfo title = findNodeById(root, ":id/title");
+            String account = title == null || title.getText() == null ? "" : title.getText().toString();
+            if (storyBatch != null && storyBatch.isSameTitle(account)) pauseTikTokStoryThenShare();
+            else {
+                performGlobalAction(GLOBAL_ACTION_BACK);
+                handler.postDelayed(() -> reopenTikTokStoryCard(System.currentTimeMillis() + 5000), 400);
+            }
+        }, 350);
+    }
+
+    private void reopenTikTokStoryCard(long deadline) {
+        if (storyBatch == null) return;
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        AccessibilityNodeInfo storyTitle = findNodeById(root, ":id/title");
+        String storyAccount = storyTitle == null || storyTitle.getText() == null ? "" : storyTitle.getText().toString();
+        if (storyBatch.isSameTitle(storyAccount)) {
+            pauseTikTokStoryThenShare();
+            return;
+        }
+        AccessibilityNodeInfo cardTitle = findNodeById(root, ":id/tv_username");
+        String title = cardTitle == null || cardTitle.getText() == null ? "" : cardTitle.getText().toString();
+        AccessibilityNodeInfo action = clickableAncestor(find(root, "View Stories"));
+        if (storyBatch.isSameTitle(title) && action != null &&
+            action.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            handler.postDelayed(this::pauseTikTokStoryThenShare, 350);
+            return;
+        }
+        if (System.currentTimeMillis() < deadline) {
+            handler.postDelayed(() -> reopenTikTokStoryCard(deadline), 150);
+            return;
+        }
+        failCollecting(new Exception("Could not reopen this account's Stories"));
+    }
+
+    private void finishTikTokStoryBatch() {
+        if (storyBatch == null) return;
+        TikTokStoryBatch batch = storyBatch;
+        List<String> links = batch.links();
+        String accountTitle = batch.accountTitle();
+        int pass = storyScanPass;
+        if (links.isEmpty()) {
+            failCollecting(new Exception("No Stories were found for this account"));
+            return;
+        }
+        Toast.makeText(this, "Checking " + links.size() + " Story links", Toast.LENGTH_SHORT).show();
+        storyValidation.execute(() -> {
+            String creatorId = null;
+            LinkedHashMap<String, String> unique = new LinkedHashMap<>();
+            for (int i = 0; i < links.size(); i++) {
+                try {
+                    Log.i("MediaDownloader", "Story validating " + (i + 1) + "/" + links.size());
+                    StreamResolver.Identity result = StreamResolver.identity(links.get(i),
+                        (component, detail) -> DiagnosticsStore.trace(this, component,
+                            "story_batch " + detail));
+                    Log.i("MediaDownloader", "Story identity index=" + (i + 1) +
+                        " post=" + result.postId + " account=" + result.accountId +
+                        " titleMatch=" + accountTitle.equals(result.displayName));
+                    if (accountTitle.equals(result.displayName)) {
+                        if (creatorId == null) creatorId = result.accountId;
+                        if (creatorId.equals(result.accountId))
+                            unique.putIfAbsent(result.postId, links.get(i));
+                    }
+                } catch (Exception error) {
+                    Log.w("MediaDownloader", "Story identity unavailable for item " + (i + 1) +
+                        ": " + error.getMessage());
+                    DiagnosticsStore.record(this, "overlay.story_identity", error.getMessage());
+                }
+            }
+            Log.i("MediaDownloader", "Story unique=" + unique.size() +
+                "/" + batch.segmentCount() + " pass=" + pass);
+            if (unique.size() >= batch.segmentCount()) {
+                List<String> verified = new ArrayList<>(unique.values());
+                handler.post(() -> {
+                    if (storyBatch != batch) return;
+                    storyBatch = null;
+                    finishCollecting();
+                    for (String link : verified) {
+                        Intent intent = new Intent(this, DownloadService.class);
+                        intent.putExtra("shareUrl", link);
+                        startForegroundService(intent);
+                    }
+                    Log.i("MediaDownloader", "Story batch queued=" + verified.size());
+                    DiagnosticsStore.trace(this, "overlay.story_batch", "queued=" + verified.size());
+                    Toast.makeText(this, "Queued " + verified.size() + " Stories for download", Toast.LENGTH_LONG).show();
+                });
+            } else if (pass < 3) {
+                handler.post(() -> {
+                    if (storyBatch != batch) return;
+                    storyScanPass++;
+                    storyScanningBackward = false;
+                    storyDirectionCaptures = 0;
+                    Toast.makeText(this, "Found " + unique.size() + " of " + batch.segmentCount() +
+                        " Stories; scanning again", Toast.LENGTH_LONG).show();
+                    performGlobalAction(GLOBAL_ACTION_BACK);
+                    handler.postDelayed(() -> reopenTikTokStoryCard(System.currentTimeMillis() + 4000), 400);
+                });
+            } else {
+                handler.post(() -> {
+                    if (storyBatch == batch) failCollecting(new Exception("Found " + unique.size() +
+                        " of " + batch.segmentCount() + " distinct Stories"));
+                });
+            }
+        });
     }
 
     private AccessibilityNodeInfo find(AccessibilityNodeInfo root, String needle) {
