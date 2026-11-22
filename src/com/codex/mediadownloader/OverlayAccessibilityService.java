@@ -318,12 +318,36 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     }
 
     private AccessibilityNodeInfo findTikTokShare(AccessibilityNodeInfo root) {
+        AccessibilityNodeInfo story = findNodeById(root, ":id/vp_story_immersive_feed");
+        if (story != null && story.isVisibleToUser()) {
+            Rect screen = new Rect();
+            root.getBoundsInScreen(screen);
+            AccessibilityNodeInfo share = findTikTokStoryShare(root, screen);
+            if (share != null) return share;
+        }
         AccessibilityNodeInfo share = find(root, "Share video");
         if (share == null) share = find(root, "Share photo");
         if (share == null) share = find(root, "Share post");
         if (share == null) share = find(root, "Share story");
         if (share == null) share = find(root, "Share Story");
         return share;
+    }
+
+    private AccessibilityNodeInfo findTikTokStoryShare(AccessibilityNodeInfo root, Rect screen) {
+        if (root == null || !root.isVisibleToUser()) return null;
+        CharSequence label = root.getContentDescription();
+        if (label != null && "Share".contentEquals(label)) {
+            Rect bounds = new Rect();
+            root.getBoundsInScreen(bounds);
+            if (bounds.centerX() >= screen.left + screen.width() * 4 / 5 &&
+                bounds.centerY() >= screen.top + screen.height() * 4 / 5)
+                return root;
+        }
+        for (int i = 0; i < root.getChildCount(); i++) {
+            AccessibilityNodeInfo share = findTikTokStoryShare(root.getChild(i), screen);
+            if (share != null) return share;
+        }
+        return null;
     }
 
     private void tapTikTokLandscapeShare(int x, int y, int taps, long deadline) {

@@ -58,13 +58,18 @@
       <h1>Download media.<br>Keep the details.</h1>
       <p class="intro">A configurable floating download control for TikTok, Instagram, and RedNote videos and photos, with progress, file details, and a local download history. Availability depends on each source's public media response.</p>
       <div class="hero-actions">
-        <a class="button" id="latest-download" href="https://github.com/OsamaRadwan/media-downloader-android/releases/download/v1.66/MediaDownloader-v1.66.apk">Get latest version <span aria-hidden="true">↓</span></a>
+        <a class="button" id="latest-download" href="https://github.com/OsamaRadwan/media-downloader-android/releases/download/v1.67/MediaDownloader-v1.67.apk">Get latest version <span aria-hidden="true">↓</span></a>
         <a class="button secondary" href="https://github.com/OsamaRadwan/media-downloader-android">View source</a>
       </div>
       <p class="note">Android 10 or newer · APK installation · Accessibility and overlay access required for the floating control</p>
       <section id="releases" aria-labelledby="releases-heading">
         <div class="section-head"><h2 id="releases-heading">All published versions</h2><p>APK and notes for each release</p></div>
         <div class="releases" id="release-list" aria-live="polite">
+            <article class="release">
+              <div class="release-top"><div><span class="version">v1.67</span><span class="prerelease">Prerelease</span><h3>Media Downloader v1.67</h3></div><time datetime="2026-11-22">22 November 2026</time></div>
+              <p class="summary">The floating button now downloads a TikTok Story from its full-screen player when TikTok exposes a fresh public media link.</p>
+              <div class="links"><a class="button" href="https://github.com/OsamaRadwan/media-downloader-android/releases/download/v1.67/MediaDownloader-v1.67.apk">Download APK ↓</a><a href="https://github.com/OsamaRadwan/media-downloader-android/releases/tag/v1.67">Release notes</a><a href="https://github.com/OsamaRadwan/media-downloader-android/archive/refs/tags/v1.67.zip">Source ZIP</a></div>
+            </article>
             <article class="release">
               <div class="release-top"><div><span class="version">v1.66</span><span class="prerelease">Prerelease</span><h3>Media Downloader v1.66</h3></div><time datetime="2026-11-21">21 November 2026</time></div>
               <p class="summary">The Instagram button selects the visible full-screen Reel; public media is checked against its link before saving.</p>
@@ -189,7 +194,7 @@
           if (newestWithApk) latestDownload.href = newestWithApk.assets.find(asset => asset.name.toLowerCase().endsWith('.apk')).browser_download_url;
         }
       } catch (error) {
-          // Keep the v1.66 release link visible when the GitHub API is unavailable.
+          // Keep the v1.67 release link visible when the GitHub API is unavailable.
       }
     }
     loadReleases();
