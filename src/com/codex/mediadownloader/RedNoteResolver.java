@@ -166,6 +166,7 @@ final class RedNoteResolver {
             });
         }
         List<StreamResolver.PhotoCandidate> photos = new ArrayList<>();
+        List<StreamResolver.AlbumItem> albumItems = new ArrayList<>();
         if (videos.isEmpty()) {
             if (images == null || images.length() == 0 || images.length() > 100)
                 throw new Exception("RedNote did not list this post's photos");
@@ -174,7 +175,8 @@ final class RedNoteResolver {
                 if (image == null) throw new Exception("RedNote album image is missing");
                 Set<String> urls = new LinkedHashSet<>();
                 String fileId = image.optString("fileId", "");
-                if (fileId.matches("[A-Za-z0-9]{20,80}"))
+                boolean validFileId = fileId.matches("[A-Za-z0-9]{20,80}");
+                if (validFileId)
                     urls.add("https://sns-img-hw.xhscdn.com/" + fileId);
                 String main = secure(image.optString("url", ""));
                 if (isMedia(main)) urls.add(main);
@@ -185,8 +187,10 @@ final class RedNoteResolver {
                     if (isMedia(url)) urls.add(url);
                 }
                 if (urls.isEmpty()) throw new Exception("RedNote album photo " + (i + 1) + " has no public URL");
-                photos.add(new StreamResolver.PhotoCandidate(i + 1, image.optInt("width", 0),
-                    image.optInt("height", 0), new ArrayList<>(urls)));
+                StreamResolver.PhotoCandidate photo = new StreamResolver.PhotoCandidate(i + 1,
+                    image.optInt("width", 0), image.optInt("height", 0), new ArrayList<>(urls));
+                photos.add(photo);
+                albumItems.add(StreamResolver.AlbumItem.photo(photo, validFileId ? fileId : ""));
             }
             cover = photos.get(0).urls.get(0);
         }
@@ -194,7 +198,7 @@ final class RedNoteResolver {
             " streams=" + videos.size() + " photos=" + photos.size());
         return new StreamResolver.Result(profile, account, id, cover, canonical, postText,
             publishedMs / 1000L, videos, photos,
-            new CookieManager(null, CookiePolicy.ACCEPT_NONE), "rednote");
+            new CookieManager(null, CookiePolicy.ACCEPT_NONE), "rednote", albumItems);
     }
 
     private static String fetch(String link, StreamResolver.Trace trace) throws Exception {

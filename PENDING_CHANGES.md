@@ -5,6 +5,7 @@ This file contains only open implementation or verification work. Delete every l
 ## TikTok
 
 - [ ] Verify a live **photo Story** from button tap through saved full-size photo, correct Story identity, filename, metadata, and Open photo. Seven video Stories were verified; a live photo Story was not available in that test.
+- [ ] Identify a stable per-photo source ID for TikTok album retries and guard against a changed carousel item at the same position. The current TikTok parser exposes image URLs and dimensions but does not persist a child ID; its retry therefore checks only index/type. A public `/photo/` page probe from this computer ended with a connection reset, so no stable field was confirmed. Do not use a signed rendition URL as a durable ID without evidence that it stays stable across retries.
 
 ## Instagram
 
@@ -17,6 +18,7 @@ This file contains only open implementation or verification work. Delete every l
 
 ## RedNote
 
+- [ ] Verify RedNote's new per-photo file-ID retry guard on multiple live albums, including a partial download and a source list that changes order. An offline parse of one saved public three-photo page retained three distinct file IDs and rejected a simulated same-type swap; no phone transfer or retry was run. If a source image lacks a valid file ID, the app retains its older index/type check.
 - [ ] Recheck older RedNote video and album records whose successful short share link was replaced by a canonical URL during an earlier retry. A newly copied link restored a missing photo in a fresh four-photo album twice, including one direct Retry-button tap, but the older three-photo album and failed video still lack a working saved link. Reopen those posts if RedNote still exposes them and capture a fresh short link; preserve exact post identity, clean-original video, and muxed audio rules.
 
 ## Shared app behavior
