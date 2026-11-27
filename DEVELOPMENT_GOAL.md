@@ -7,7 +7,7 @@ This is the public change-request file for Media Downloader. Edit the **Requests
 | ID | Status | Request | Completion condition |
 | --- | --- | --- | --- |
 | CR-001 | In progress | Audit `FEATURES.md` against TikTok, Instagram, and RedNote; implement missing supported behavior and verify it. | Every actionable gap is implemented and tested, or its exact external blocker is documented in `PENDING_CHANGES.md`. |
-| CR-002 | In progress | Align the floating download button when TikTok plays a video from a playlist. | Button position follows the visible video and remains stable when entering and leaving a playlist, in portrait and rotated views; on-phone checks cover tap and long press without covering TikTok controls. |
+| CR-002 | Complete | Align the floating download button when TikTok plays a video from a playlist. | Button position follows the visible video and remains stable when entering and leaving a playlist, in portrait and rotated views; on-phone checks cover tap and long press without covering TikTok controls. |
 
 Add future requests as `CR-003`, `CR-004`, and so on with status `New`. Keep the original request and its acceptance condition visible when changing its status. Do not treat an unverified feature as complete.
 

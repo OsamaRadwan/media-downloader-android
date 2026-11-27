@@ -54,6 +54,11 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private Rect tiktokVideoBounds;
     private Rect tiktokScreenBounds;
     private Rect tiktokRightControlBounds;
+    private Rect lastTikTokPortraitControlBounds;
+    private int lastTikTokPortraitInset;
+    private int lastTikTokPortraitScreenWidth;
+    private int lastTikTokPortraitScreenHeight;
+    private long tikTokPortraitRestoreUntil;
     private boolean landscapeCapture;
     private boolean visibilityCheckQueued;
     private boolean visibilityCheckImmediate;
@@ -176,7 +181,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                 root.getBoundsInScreen(screen);
                 Rect video = landscape ? findTikTokVideoBounds(root) :
                     findTikTokPortraitVideoBounds(windows, screen);
-                Rect rightControl = landscape ? null : findTikTokRightControlBounds(windows, screen);
+                Rect rightControl = landscape ? null : findTikTokBounds(root, screen, false);
                 showOverlay(TIKTOK, landscape ? OverlayPlacement.TIKTOK_LANDSCAPE : OverlayPlacement.TIKTOK,
                     video, screen, rightControl);
             } else if (INSTAGRAM.equals(topApp)) {
@@ -213,6 +218,8 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         if (overlay != null && TIKTOK.equals(app) && TIKTOK.equals(sourceApp) &&
             newPlacement != placement &&
             (newPlacement == OverlayPlacement.TIKTOK || newPlacement == OverlayPlacement.TIKTOK_LANDSCAPE)) {
+            tikTokPortraitRestoreUntil = newPlacement == OverlayPlacement.TIKTOK ?
+                android.os.SystemClock.uptimeMillis() + 2000 : 0;
             hideOverlay();
         }
         if (overlay != null) {
@@ -293,11 +300,27 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             int topInset = Build.VERSION.SDK_INT >= 30 ?
                 windowManager.getCurrentWindowMetrics().getWindowInsets()
                     .getInsets(WindowInsets.Type.statusBars()).top : 0;
+            Rect rightControl = tiktokRightControlBounds;
+            if (topInset > 0 && rightControl != null) {
+                lastTikTokPortraitControlBounds = new Rect(rightControl);
+                lastTikTokPortraitInset = topInset;
+                lastTikTokPortraitScreenWidth = tiktokScreenBounds.width();
+                lastTikTokPortraitScreenHeight = tiktokScreenBounds.height();
+                tikTokPortraitRestoreUntil = 0;
+            } else if (android.os.SystemClock.uptimeMillis() < tikTokPortraitRestoreUntil &&
+                lastTikTokPortraitControlBounds != null &&
+                lastTikTokPortraitScreenWidth == tiktokScreenBounds.width() &&
+                lastTikTokPortraitScreenHeight == tiktokScreenBounds.height()) {
+                // Window metrics and child bounds can still describe the rotated player
+                // during the first portrait frame. Keep the last safe control anchor.
+                rightControl = lastTikTokPortraitControlBounds;
+                topInset = lastTikTokPortraitInset;
+            }
             OverlaySettings.placeTikTokPortrait(params, this, settings, tiktokScreenBounds.height(),
                 tiktokVideoBounds == null ? 0 :
                     tiktokVideoBounds.bottom - tiktokScreenBounds.top - topInset,
-                tiktokRightControlBounds == null ? 0 :
-                    tiktokRightControlBounds.top - tiktokScreenBounds.top - topInset);
+                rightControl == null ? 0 :
+                    rightControl.top - tiktokScreenBounds.top - topInset);
         }
         else OverlaySettings.place(params, this, settings, placement);
     }
@@ -343,10 +366,6 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         return sheet == null ? null : new Rect(screen.left, screen.top, screen.right, sheet.top);
     }
 
-    private Rect findTikTokRightControlBounds(List<AccessibilityWindowInfo> windows, Rect screen) {
-        return findTikTokBounds(windows, screen, false);
-    }
-
     private Rect findTikTokBounds(List<AccessibilityWindowInfo> windows, Rect screen, boolean sheet) {
         Rect best = null;
         for (AccessibilityWindowInfo window : windows) {
@@ -378,6 +397,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                     bounds.top > screen.top + screen.height() / 8 &&
                     bounds.top < screen.bottom - screen.height() / 8 :
                 bounds.left >= screen.left + screen.width() * 3 / 4 &&
+                    bounds.right <= screen.right && bounds.bottom <= screen.bottom &&
                     bounds.top > screen.top + screen.height() / 4 &&
                     bounds.top < screen.bottom - screen.height() / 8;
             if (eligible) return bounds;
