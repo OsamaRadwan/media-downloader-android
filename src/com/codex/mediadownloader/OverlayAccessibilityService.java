@@ -736,10 +736,10 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                     int width = pixels.getWidth(), height = pixels.getHeight();
                     int[] above = new int[width], row = new int[width], below = new int[width];
                     List<Integer> best = new ArrayList<>();
-                    // The Story frame boundary itself can resemble progress segments.
-                    // The actual strip sits just below it, at about 8% of screen height.
-                    int firstY = Math.max(6, height / 13);
-                    int lastY = Math.min(height - 7, height / 10);
+                    // Cover different status-bar and frame positions; spacing rejects
+                    // the frame boundary even when it has horizontal image edges.
+                    int firstY = Math.max(6, height / 25);
+                    int lastY = Math.min(height - 7, height / 8);
                     int bestY = -1;
                     for (int y = firstY; y <= lastY; y++) {
                         pixels.getPixels(above, 0, width, 0, y - 6, width, 1);

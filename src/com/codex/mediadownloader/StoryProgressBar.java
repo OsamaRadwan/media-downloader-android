@@ -53,7 +53,7 @@ final class StoryProgressBar {
         double pitch = (double) width / centers.size();
         for (int i = 0; i < centers.size(); i++) {
             double expected = pitch * (i + 0.5);
-            if (Math.abs(centers.get(i) - expected) > pitch * 0.24) return false;
+            if (Math.abs(centers.get(i) - expected) > pitch * 0.10) return false;
         }
         return true;
     }

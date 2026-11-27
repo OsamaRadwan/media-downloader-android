@@ -18,6 +18,15 @@ public final class InstagramStoryBatchTest {
         check(links.size() == 2 && !links.get(0).contains("igsh") &&
             links.get(0).equals("https://www.instagram.com/stories/Creator.Name/4039520695896226266/"),
             "canonical links discard share tokens");
+        InstagramStoryBatch middle = new InstagramStoryBatch("Creator.Name", 4);
+        for (int item : new int[]{3, 4, 4, 3, 2}) {
+            middle.captured("https://www.instagram.com/stories/Creator.Name/403952069589622626" + item + "/");
+        }
+        check(!middle.isComplete() && middle.collectedCount() == 3,
+            "middle start stays incomplete until the first Story is seen");
+        middle.captured("https://www.instagram.com/stories/Creator.Name/4039520695896226261/");
+        check(middle.isComplete() && middle.links().size() == 4,
+            "forward and backward scan collects all four distinct Stories");
         reject(() -> new InstagramStoryBatch("Creator", 0), "zero segments");
         reject(() -> new InstagramStoryBatch("Creator", 101), "excess segments");
         rejectIo(() -> new InstagramStoryBatch("Creator", 1).captured(
