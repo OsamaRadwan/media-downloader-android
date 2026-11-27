@@ -4,6 +4,8 @@ This log distinguishes code installed locally from GitHub releases. It summarize
 
 ## Local development bundle after v1.68 — not yet published
 
+- **RedNote album source audit (offline):** A saved three-photo public page retains three distinct file IDs, but fresh direct URLs for that exact note all redirect to an unsupported numeric route without post data. The production resolver rejected the redirects; cross-response ID stability and on-phone retry remain pending. No app code or release changed in this audit.
+
 - **Instagram Story source diagnostics (offline only):** Anonymous profile pages for five tested public accounts now exposed one owner ID each, but their reels-media responses were HTTP 200 with no Story items. The production resolver reached that empty response for an older Story link. It now logs reel count, whether the requested account matched, and item count, and reports an empty public list without claiming a sign-in is necessarily required. The Java suite and signed build passed. No currently active Story, phone capture, or saved Story was verified.
 
 - **Video fallback across distinct URLs (offline only):** A silent or invalid MP4 no longer causes every later URL with the same source variant label to be skipped. The transfer still deduplicates identical URLs and accepts only a file with sampled video and audio tracks. This fixes a code path affecting Instagram Story variants and TikTok mirror URLs. The Java suite and signed build passed; an actual silent-first, muxed-second transfer has not been verified on the phone. No release was published.
