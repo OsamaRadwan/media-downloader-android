@@ -146,29 +146,114 @@ final class InstagramResolver {
         JSONObject caption = product.optJSONObject("caption");
         PostText postText = PostText.from("", caption == null ? "" : caption.optString("text", ""),
             Collections.emptyList());
-        List<StreamResolver.Candidate> videos = new ArrayList<>();
-        JSONArray versions = product.optJSONArray("video_versions");
-        if (versions != null) for (int i = versions.length() - 1; i >= 0; i--) {
-            JSONObject version = versions.optJSONObject(i);
-            if (version == null) continue;
-            String url = version.optString("url", "");
-            if (https(url)) videos.add(new StreamResolver.Candidate(url,
-                version.optInt("width", 0), version.optInt("height", 0), 0,
-                "instagram-modern-" + version.optString("type", Integer.toString(i))));
-        }
+        String cover = modernCover(product);
+        JSONArray children = product.optJSONArray("carousel_media");
+        if (children != null) return parseModernCarousel(children, profile, account, postId,
+            cover, canonical, postText, published, trace);
+        List<StreamResolver.Candidate> videos = modernVideoCandidates(product, "instagram-modern");
         if (videos.isEmpty()) throw new Exception("Instagram did not expose a direct video stream");
-        String cover = product.optString("display_uri", "");
-        if (!https(cover)) {
-            JSONObject image = product.optJSONObject("image_versions2");
-            JSONArray candidates = image == null ? null : image.optJSONArray("candidates");
-            JSONObject first = candidates == null ? null : candidates.optJSONObject(0);
-            cover = first == null ? "" : first.optString("url", "");
-            if (!https(cover)) cover = "";
-        }
         trace(trace, "instagram.modern", "matched=true streams=" + videos.size() +
             " listed=" + product.optInt("original_width", 0) + "x" + product.optInt("original_height", 0));
         return new StreamResolver.Result(profile, account, postId, cover, canonical, postText,
             published, videos, new ArrayList<>(), new CookieManager(null, CookiePolicy.ACCEPT_NONE), "instagram");
+    }
+
+    private static StreamResolver.Result parseModernCarousel(JSONArray children, String profile,
+            String account, String postId, String cover, String canonical, PostText postText,
+            long published, StreamResolver.Trace trace) throws Exception {
+        if (children.length() == 0 || children.length() > 100)
+            throw new Exception("Instagram album has an invalid number of items");
+        Set<String> childIds = new LinkedHashSet<>();
+        List<StreamResolver.AlbumItem> items = new ArrayList<>();
+        List<StreamResolver.PhotoCandidate> photos = new ArrayList<>();
+        for (int i = 0; i < children.length(); i++) {
+            JSONObject child = children.optJSONObject(i);
+            if (child == null) throw new Exception("Instagram album item is missing");
+            String childId = child.optString("pk", "");
+            if (!childId.matches("[0-9]{1,24}") || !childIds.add(childId))
+                throw new Exception("Instagram album has an invalid or repeated item ID");
+            String childCode = child.optString("code", "");
+            if (!childCode.isEmpty() && !childId.equals(idFromShortcode(childCode)))
+                throw new Exception("Instagram album item ID does not match its code");
+            JSONObject childUser = child.optJSONObject("user");
+            if (childUser != null) {
+                String childOwner = childUser.optString("pk", childUser.optString("id", ""));
+                if (!childOwner.isEmpty() && !account.equals(childOwner))
+                    throw new Exception("Instagram album item belongs to another account");
+            }
+            int index = i + 1;
+            int mediaType = child.optInt("media_type", 0);
+            if (mediaType == 1) {
+                StreamResolver.PhotoCandidate photo = modernPhoto(child, index);
+                photos.add(photo);
+                items.add(StreamResolver.AlbumItem.photo(photo, childId));
+                if (cover.isEmpty() && index == 1) cover = photo.urls.get(0);
+            } else if (mediaType == 2) {
+                List<StreamResolver.Candidate> videos = modernVideoCandidates(child,
+                    "instagram-modern-album-" + index);
+                if (videos.isEmpty()) throw new Exception("Instagram album video " + index + " has no public stream");
+                items.add(StreamResolver.AlbumItem.video(index, videos, childId));
+                if (cover.isEmpty() && index == 1) cover = modernCover(child);
+            } else throw new Exception("Instagram album item " + index + " has an unknown media type");
+        }
+        trace(trace, "instagram.modern", "matched=true album_items=" + items.size() +
+            " photos=" + photos.size());
+        return new StreamResolver.Result(profile, account, postId, cover, canonical, postText,
+            published, new ArrayList<>(), photos,
+            new CookieManager(null, CookiePolicy.ACCEPT_NONE), "instagram", items);
+    }
+
+    private static StreamResolver.PhotoCandidate modernPhoto(JSONObject child, int index) throws Exception {
+        int width = child.optInt("original_width", 0);
+        int height = child.optInt("original_height", 0);
+        Set<String> urls = new LinkedHashSet<>();
+        JSONObject image = child.optJSONObject("image_versions2");
+        JSONArray candidates = image == null ? null : image.optJSONArray("candidates");
+        if (candidates != null) for (int i = 0; i < candidates.length() && i < 32; i++) {
+            JSONObject candidate = candidates.optJSONObject(i);
+            if (candidate == null) continue;
+            int candidateWidth = candidate.optInt("width", 0);
+            int candidateHeight = candidate.optInt("height", 0);
+            if (width > 0 && height > 0 && candidateWidth > 0 && candidateHeight > 0 &&
+                Math.abs((double) candidateWidth / candidateHeight - (double) width / height) > 0.08)
+                continue;
+            String url = candidate.optString("url", "");
+            if (https(url)) urls.add(url);
+        }
+        String display = child.optString("display_uri", "");
+        if (https(display)) urls.add(display);
+        if (urls.isEmpty()) throw new Exception("Instagram album photo " + index + " has no public image");
+        return new StreamResolver.PhotoCandidate(index, width, height, new ArrayList<>(urls));
+    }
+
+    private static List<StreamResolver.Candidate> modernVideoCandidates(JSONObject media, String label) {
+        List<StreamResolver.Candidate> videos = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        JSONArray versions = media.optJSONArray("video_versions");
+        if (versions != null) for (int i = versions.length() - 1; i >= 0; i--) {
+            JSONObject version = versions.optJSONObject(i);
+            if (version == null) continue;
+            String url = version.optString("url", "");
+            if (https(url) && seen.add(url)) videos.add(new StreamResolver.Candidate(url,
+                version.optInt("width", 0), version.optInt("height", 0), 0,
+                label + "-" + version.optString("type", Integer.toString(i))));
+        }
+        String primary = media.optString("video_url", "");
+        if (https(primary) && seen.add(primary))
+            videos.add(new StreamResolver.Candidate(primary, media.optInt("original_width", 0),
+                media.optInt("original_height", 0), 0, label + "-primary"));
+        videos.sort((a, b) -> Long.compare((long) b.width * b.height, (long) a.width * a.height));
+        return videos;
+    }
+
+    private static String modernCover(JSONObject media) {
+        String cover = media.optString("display_uri", "");
+        if (https(cover)) return cover;
+        JSONObject image = media.optJSONObject("image_versions2");
+        JSONArray candidates = image == null ? null : image.optJSONArray("candidates");
+        JSONObject first = candidates == null ? null : candidates.optJSONObject(0);
+        cover = first == null ? "" : first.optString("url", "");
+        return https(cover) ? cover : "";
     }
 
     private static JSONObject findModernProduct(Object node, String code, String postId, int depth) {
