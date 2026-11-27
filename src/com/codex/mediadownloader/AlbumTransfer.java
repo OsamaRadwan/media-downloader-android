@@ -152,6 +152,9 @@ final class AlbumTransfer {
             File optionFile = selected == firstFile ? secondFile : firstFile;
             try {
                 PhotoFile option = fetch(context, result, entry, candidate, url, optionFile, progress, false);
+                if (("instagram".equals(result.platform) || "rednote".equals(result.platform)) &&
+                    !PhotoQuality.matchesAspect(option.width, option.height, candidate.width, candidate.height))
+                    throw new Exception("Photo rendition has a different crop from the source listing");
                 if (best == null || PhotoQuality.better(option.width, option.height, optionFile.length(),
                     best.width, best.height, selected.length())) {
                     if (selected != null) selected.delete();

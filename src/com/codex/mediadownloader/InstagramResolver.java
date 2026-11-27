@@ -223,8 +223,8 @@ final class InstagramResolver {
             if (candidate == null) continue;
             int candidateWidth = candidate.optInt("width", 0);
             int candidateHeight = candidate.optInt("height", 0);
-            if (width > 0 && height > 0 && candidateWidth > 0 && candidateHeight > 0 &&
-                Math.abs((double) candidateWidth / candidateHeight - (double) width / height) > 0.08)
+            if (candidateWidth > 0 && candidateHeight > 0 &&
+                !PhotoQuality.matchesAspect(candidateWidth, candidateHeight, width, height))
                 continue;
             String url = candidate.optString("url", "");
             if (https(url)) urls.add(url);
@@ -600,8 +600,8 @@ final class InstagramResolver {
             if (resource == null) continue;
             int candidateWidth = resource.optInt("config_width", 0);
             int candidateHeight = resource.optInt("config_height", 0);
-            if (width > 0 && height > 0 && candidateWidth > 0 && candidateHeight > 0 &&
-                Math.abs((double) candidateWidth / candidateHeight - (double) width / height) > 0.08)
+            if (candidateWidth > 0 && candidateHeight > 0 &&
+                !PhotoQuality.matchesAspect(candidateWidth, candidateHeight, width, height))
                 continue; // Omit square crops of a portrait or landscape original.
             String url = resource.optString("src", "");
             if (https(url)) urls.add(url);

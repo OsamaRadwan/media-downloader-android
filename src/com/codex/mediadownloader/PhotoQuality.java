@@ -15,4 +15,12 @@ final class PhotoQuality {
         return listedWidth > 0 && listedHeight > 0 &&
             width >= listedWidth && height >= listedHeight;
     }
+
+    static boolean matchesAspect(int width, int height, int listedWidth, int listedHeight) {
+        if (listedWidth < 1 || listedHeight < 1) return true;
+        if (width < 1 || height < 1) return false;
+        double listed = (double) listedWidth / listedHeight;
+        return Math.abs((double) width / height / listed - 1) <= 0.03 ||
+            Math.abs((double) height / width / listed - 1) <= 0.03;
+    }
 }

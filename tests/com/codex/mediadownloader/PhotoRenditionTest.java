@@ -19,6 +19,16 @@ public final class PhotoRenditionTest {
             "A larger signed template must be counted once");
         check(baseline.get(0).urls.size() == 4 && baseline.get(0).width == 2160,
             "Both large mirrors and their listed dimensions must remain available");
+        check(PhotoQuality.better(1500, 1500, 500000, 1080, 1350, 400000) &&
+            !PhotoQuality.matchesAspect(1500, 1500, 1080, 1350) &&
+            !PhotoQuality.matchesAspect(1080, 1440, 1080, 1350),
+            "Square and 3:4 crops must not replace a listed 4:5 portrait photo");
+        check(PhotoQuality.matchesAspect(1000, 1249, 1000, 1250) &&
+            PhotoQuality.matchesAspect(1000, 1249, 1080, 1350) &&
+            PhotoQuality.matchesAspect(4284, 5712, 1080, 1440) &&
+            PhotoQuality.matchesAspect(1350, 1080, 1080, 1350) &&
+            PhotoQuality.matchesAspect(1500, 1500, 0, 0),
+            "Equivalent shapes, stored rotation, and missing listed dimensions remain eligible");
         String imagePath = "/tos-useast5-i-photomode-tx/f7cf550d212e450e8db0190589ba292e";
         String firstId = StreamResolver.photoSourceId(Arrays.asList(
             "https://p19-sign.tiktokcdn-us.com" + imagePath + "~tplv-photomode-image.jpeg?x-signature=secret-a",
