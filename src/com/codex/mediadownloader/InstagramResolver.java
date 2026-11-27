@@ -306,7 +306,10 @@ final class InstagramResolver {
         JSONObject reel = reels == null ? null : reels.optJSONObject(account);
         if (reel == null && reels != null) reel = reels.optJSONObject(profile);
         JSONArray items = reel == null ? null : reel.optJSONArray("items");
-        if (items == null) throw new Exception("Instagram did not expose public Story media without an account session");
+        trace(trace, "instagram.story_data", "reels=" + (reels == null ? -1 : reels.length()) +
+            " accountMatched=" + (reel != null) + " items=" + (items == null ? -1 : items.length()));
+        if (items == null || items.length() == 0)
+            throw new Exception("Instagram returned no public Story items for this account");
         JSONObject item = null;
         for (int i = 0; i < items.length(); i++) {
             JSONObject candidate = items.optJSONObject(i);
@@ -315,7 +318,7 @@ final class InstagramResolver {
                 break;
             }
         }
-        if (item == null) throw new Exception("The current Story is unavailable or has expired");
+        if (item == null) throw new Exception("This Story ID was absent from Instagram's public Story list");
         long published = item.optLong("taken_at", 0);
         if (published < 1000000000L || published > System.currentTimeMillis() / 1000L + 86400L)
             throw new Exception("Instagram did not expose a valid Story publish time");
