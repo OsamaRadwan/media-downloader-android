@@ -62,7 +62,8 @@ final class InstagramResolver {
             String profile = singlePhotoProfile(html, code);
             if (profile == null) {
                 result = resolveModern(canonical, code, trace);
-                trace(trace, "instagram.resolved", "kind=video streams=" + result.candidates.size());
+                trace(trace, "instagram.resolved", "kind=" + (result.isAlbum() ? "photos" : "video") +
+                    " photos=" + result.photos.size() + " streams=" + result.candidates.size());
                 return result;
             }
             String postId = idFromShortcode(code);
