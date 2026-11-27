@@ -27,6 +27,7 @@ $sources = @(
     'src\com\codex\mediadownloader\DiagnosticsFilePruner.java',
     'src\com\codex\mediadownloader\DiagnosticsDailyLog.java',
     'src\com\codex\mediadownloader\MediaRequestCookies.java',
+    'src\com\codex\mediadownloader\MediaResponseLength.java',
     'src\com\codex\mediadownloader\NetworkRoute.java',
     'src\com\codex\mediadownloader\NetworkRouteStore.java',
     'src\com\codex\mediadownloader\HttpDeadline.java',
@@ -47,6 +48,7 @@ $sources = @(
     'tests\com\codex\mediadownloader\DiagnosticsFilePrunerTest.java'
     'tests\com\codex\mediadownloader\DiagnosticsDailyLogTest.java'
     'tests\com\codex\mediadownloader\MediaRequestCookiesTest.java'
+    'tests\com\codex\mediadownloader\MediaResponseLengthTest.java'
     'tests\com\codex\mediadownloader\NetworkRouteTest.java'
     'tests\com\codex\mediadownloader\HttpDeadlineTest.java'
     'tests\com\codex\mediadownloader\RedNoteVideoPolicyTest.java'
@@ -84,6 +86,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Diagnostic file pruning tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Diagnostic daily log tests failed' }
 & java -cp $target com.codex.mediadownloader.MediaRequestCookiesTest
 if ($LASTEXITCODE -ne 0) { throw 'Media request cookie tests failed' }
+& java -cp $target com.codex.mediadownloader.MediaResponseLengthTest
+if ($LASTEXITCODE -ne 0) { throw 'Media response length tests failed' }
 & java -cp $target com.codex.mediadownloader.NetworkRouteTest
 if ($LASTEXITCODE -ne 0) { throw 'Network route tests failed' }
 & java -cp $target com.codex.mediadownloader.HttpDeadlineTest

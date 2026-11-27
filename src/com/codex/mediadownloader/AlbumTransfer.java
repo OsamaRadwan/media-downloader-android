@@ -257,6 +257,7 @@ final class AlbumTransfer {
                 }
                 output.flush();
             }
+            MediaResponseLength.verify(status, length, connection.getHeaderField("Content-Range"), written);
             if (written < 100) throw new Exception("Image response was too short");
             byte[] head = new byte[12];
             try (InputStream input = new FileInputStream(destination)) {

@@ -636,6 +636,7 @@ public class DownloadService extends Service {
                     }
                 }
                 output.flush();
+                MediaResponseLength.verify(code, total, connection.getHeaderField("Content-Range"), written);
                 if (written < 1024) throw new Exception(label + " was unexpectedly short");
                 entry.downloadedBytes = savedBytes + written;
                 entry.totalBytes = albumIndex > 0 ? -1 : total > 0 ? total : written;
