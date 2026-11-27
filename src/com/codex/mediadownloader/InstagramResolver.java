@@ -150,6 +150,15 @@ final class InstagramResolver {
         JSONArray children = product.optJSONArray("carousel_media");
         if (children != null) return parseModernCarousel(children, profile, account, postId,
             cover, canonical, postText, published, trace);
+        if (product.optInt("media_type", 0) == 1) {
+            StreamResolver.PhotoCandidate photo = modernPhoto(product, 1);
+            if (cover.isEmpty()) cover = photo.urls.get(0);
+            trace(trace, "instagram.modern", "matched=true photos=1 listed=" +
+                photo.width + "x" + photo.height);
+            return new StreamResolver.Result(profile, account, postId, cover, canonical, postText,
+                published, new ArrayList<>(), Collections.singletonList(photo),
+                new CookieManager(null, CookiePolicy.ACCEPT_NONE), "instagram");
+        }
         List<StreamResolver.Candidate> videos = modernVideoCandidates(product, "instagram-modern");
         if (videos.isEmpty()) throw new Exception("Instagram did not expose a direct video stream");
         trace(trace, "instagram.modern", "matched=true streams=" + videos.size() +
