@@ -31,6 +31,7 @@ $sources = @(
     'src\com\codex\mediadownloader\NetworkRouteStore.java',
     'src\com\codex\mediadownloader\HttpDeadline.java',
     'src\com\codex\mediadownloader\StreamResolver.java',
+    'src\com\codex\mediadownloader\AlbumItemIdentity.java',
     'src\com\codex\mediadownloader\TikTokStoryBatch.java',
     'src\com\codex\mediadownloader\InstagramStoryBatch.java',
     'src\com\codex\mediadownloader\SharedPostLink.java',

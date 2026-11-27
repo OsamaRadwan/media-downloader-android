@@ -20,12 +20,26 @@ public final class AlbumMediaPlanTest {
         StreamResolver.Result mixed = new StreamResolver.Result("creator", "42", "123", "", "",
             PostText.from("", "", Collections.emptyList()), 1,
             new ArrayList<>(), Arrays.asList(first, last), new CookieManager(), "instagram",
-            Arrays.asList(StreamResolver.AlbumItem.photo(first),
-                StreamResolver.AlbumItem.video(2, Collections.singletonList(middle)),
-                StreamResolver.AlbumItem.photo(last)));
+            Arrays.asList(StreamResolver.AlbumItem.photo(first, "101"),
+                StreamResolver.AlbumItem.video(2, Collections.singletonList(middle), "102"),
+                StreamResolver.AlbumItem.photo(last, "103")));
         check(mixed.isAlbum() && mixed.hasAlbumVideos(), "mixed sidecar is an album with video");
         check(mixed.albumItems.size() == 3 && mixed.albumItems.get(1).video.get(0) == middle &&
-            mixed.albumItems.get(2).photo == last, "source order and item types survive parsing");
+            mixed.albumItems.get(2).photo == last &&
+            "102".equals(mixed.albumItems.get(1).sourceId),
+            "source order, item types, and child identities survive parsing");
+        try {
+            AlbumItemIdentity.validate(mixed.albumItems.get(0), 1, "photo", "101");
+            AlbumItemIdentity.validate(mixed.albumItems.get(0), 1, "photo", "");
+        } catch (Exception error) { throw new AssertionError("matching and legacy rows should retry", error); }
+        boolean swapped = false;
+        try { AlbumItemIdentity.validate(mixed.albumItems.get(0), 1, "photo", "103"); }
+        catch (Exception expected) { swapped = true; }
+        check(swapped, "a same-type child swapped into an earlier position is rejected");
+        boolean missing = false;
+        try { AlbumItemIdentity.validate(StreamResolver.AlbumItem.photo(first), 1, "photo", "101"); }
+        catch (Exception expected) { missing = true; }
+        check(missing, "a known child ID cannot disappear on retry");
         StreamResolver.Result photos = new StreamResolver.Result("creator", "42", "123", "", "",
             PostText.from("", "", Collections.emptyList()), 1,
             new ArrayList<>(), Collections.singletonList(first), new CookieManager(), "instagram");

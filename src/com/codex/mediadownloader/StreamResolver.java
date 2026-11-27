@@ -102,21 +102,30 @@ public final class StreamResolver {
 
     static final class AlbumItem {
         final int index;
+        final String sourceId;
         final PhotoCandidate photo;
         final List<Candidate> video;
-        private AlbumItem(int index, PhotoCandidate photo, List<Candidate> video) {
+        private AlbumItem(int index, String sourceId, PhotoCandidate photo, List<Candidate> video) {
             this.index = index;
+            this.sourceId = sourceId;
             this.photo = photo;
             this.video = video;
         }
         static AlbumItem photo(PhotoCandidate candidate) {
+            return photo(candidate, "");
+        }
+        static AlbumItem photo(PhotoCandidate candidate, String sourceId) {
             if (candidate == null || candidate.index < 1) throw new IllegalArgumentException("Invalid album photo");
-            return new AlbumItem(candidate.index, candidate, null);
+            return new AlbumItem(candidate.index, sourceId == null ? "" : sourceId, candidate, null);
         }
         static AlbumItem video(int index, List<Candidate> candidates) {
+            return video(index, candidates, "");
+        }
+        static AlbumItem video(int index, List<Candidate> candidates, String sourceId) {
             if (index < 1 || candidates == null || candidates.isEmpty())
                 throw new IllegalArgumentException("Invalid album video");
-            return new AlbumItem(index, null, new ArrayList<>(candidates));
+            return new AlbumItem(index, sourceId == null ? "" : sourceId,
+                null, new ArrayList<>(candidates));
         }
     }
 

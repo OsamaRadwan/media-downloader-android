@@ -58,12 +58,12 @@ final class AlbumTransfer {
         if (entry.photos.isEmpty()) for (StreamResolver.AlbumItem item : result.albumItems) {
             DownloadStore.Entry.Photo record = new DownloadStore.Entry.Photo(item.index);
             record.kind = item.video == null ? "photo" : "video";
+            record.sourceId = item.sourceId;
             entry.photos.add(record);
         }
         for (StreamResolver.AlbumItem item : result.albumItems) {
             DownloadStore.Entry.Photo record = entry.photos.get(item.index - 1);
-            if (record.index != item.index || !record.kind.equals(item.video == null ? "photo" : "video"))
-                throw new Exception("Album items changed since the earlier download; retry as a new job");
+            AlbumItemIdentity.validate(item, record.index, record.kind, record.sourceId);
         }
         entry.mediaType = "album";
         entry.fileName = result.hasAlbumVideos() ? result.albumItems.size() + " items • post " + result.videoId :

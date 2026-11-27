@@ -359,14 +359,15 @@ final class InstagramResolver {
                 if (childOwner != null && !account.equals(childOwner.optString("id", account)))
                     throw new Exception("Instagram album item belongs to another account");
                 String childId = child.optString("id", "");
-                if (!childId.isEmpty() && (!childId.matches("[0-9]{1,24}") || !childIds.add(childId)))
+                if (!childId.matches("[0-9]{1,24}") || !childIds.add(childId))
                     throw new Exception("Instagram album has an invalid or repeated item ID");
                 if (child.optBoolean("is_video"))
-                    albumItems.add(StreamResolver.AlbumItem.video(i + 1, videoCandidates(child, i + 1)));
+                    albumItems.add(StreamResolver.AlbumItem.video(i + 1,
+                        videoCandidates(child, i + 1), childId));
                 else {
                     StreamResolver.PhotoCandidate image = photo(child, i + 1);
                     photos.add(image);
-                    albumItems.add(StreamResolver.AlbumItem.photo(image));
+                    albumItems.add(StreamResolver.AlbumItem.photo(image, childId));
                 }
             }
         } else if (media.optBoolean("is_video")) {

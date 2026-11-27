@@ -20,8 +20,10 @@ if ($LASTEXITCODE -ne 0) { throw 'APK linking failed' }
 $sources = @(Get-ChildItem (Join-Path $project 'src') -Recurse -Filter '*.java' | ForEach-Object FullName)
 & javac -encoding UTF-8 --release 8 -cp $androidJar -d $classes @sources
 if ($LASTEXITCODE -ne 0) { throw 'Java compilation failed' }
-$classFiles = @(Get-ChildItem $classes -Recurse -Filter '*.class' | ForEach-Object FullName)
-& (Join-Path $tools 'd8.bat') --lib $androidJar --min-api 23 --output $dex @classFiles
+$classJar = Join-Path $build 'compiled-classes.jar'
+& jar cf $classJar -C $classes .
+if ($LASTEXITCODE -ne 0) { throw 'Packaging compiled Java classes failed' }
+& (Join-Path $tools 'd8.bat') --lib $androidJar --min-api 23 --output $dex $classJar
 if ($LASTEXITCODE -ne 0) { throw 'DEX compilation failed' }
 Push-Location $dex
 try { & (Join-Path $tools 'aapt.exe') add (Join-Path $build 'base-unsigned.apk') 'classes.dex' }
