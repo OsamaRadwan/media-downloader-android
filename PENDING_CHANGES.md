@@ -16,8 +16,7 @@ This file contains only open implementation or verification work. Delete every l
 ## RedNote
 
 - [ ] Inspect the installed app for a Story surface. If RedNote Stories are available, add current-Story capture and account-wide collection under the generic Story requirement, then test both video and photo. If that surface is absent, record the observed app version and narrow the requirement in `FEATURES.md`.
-- [ ] Restore a missing RedNote album photo from the public source after Redownload. In a three-photo album, the original 4284×5712 HEIC was relinked through Android's picker by exact filename and byte size, returning the card to Complete; the other photos remained intact. Redownload reached a first-party redirect with an unsupported three-digit path segment and could not fetch fresh post data. Determine whether a fresh public share link resolves to this same route, then retry on a reachable partial album.
-- [ ] Test multiple public videos after clean-original selection. Record any post that offers only stamped or video-only assets; keep such failures visible rather than saving a branded or silent file.
+- [ ] Recheck older RedNote video and album records whose successful short share link was replaced by a canonical URL during an earlier retry. A newly copied link restored a missing photo in a fresh four-photo album twice, including one direct Retry-button tap, but the older three-photo album and failed video still lack a working saved link. Reopen those posts if RedNote still exposes them and capture a fresh short link; preserve exact post identity, clean-original video, and muxed audio rules.
 
 ## Shared app behavior
 
