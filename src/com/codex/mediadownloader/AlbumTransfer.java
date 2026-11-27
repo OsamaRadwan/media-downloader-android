@@ -233,7 +233,8 @@ final class AlbumTransfer {
                 " host=" + connection.getURL().getHost() + " http=" + status +
                 " type=" + connection.getContentType() + " bytes=" + connection.getContentLengthLong() +
                 " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStarted));
-            if (status != 200) throw new Exception("Image server returned HTTP " + status);
+            if (status != 200 && status != 206)
+                throw new Exception("Image server returned HTTP " + status);
             long length = connection.getContentLengthLong();
             if (length > 40_000_000) throw new Exception("Photo exceeds 40 MB limit");
             long previousBytes = 0;
