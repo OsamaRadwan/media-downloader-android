@@ -11,12 +11,12 @@ This file contains only open implementation or verification work. Delete every l
 - [ ] Implement account-wide Story collection from one Story-viewer tap, validating every Story ID and account before queueing. The current implementation handles one copied Story URL at a time.
 - [ ] Investigate public media discovery for visible Stories. Tested NASA and National Geographic Stories returned no anonymous media; do not save a linked post or preview in place of the Story. Verify video with audio and largest available photo renditions on multiple Stories once accessible.
 - [ ] Investigate playable feed/Reel posts that fail because an anonymous response omits media or offers only a video-only file. Preserve exact post identity and the one-file-with-audio requirement; verify multiple feed videos and opened Reels after a fix.
-- [ ] Exercise missing-photo Redownload and document-picker relinking on an Instagram album, including a partial album, and verify file name and actual byte size.
+- [ ] Restore a missing Instagram album photo from the public source after Redownload. On the NASA two-photo album, an explicit retry now starts even when another complete history card exists for the same post, but Instagram returned no anonymous media details. Document-picker relinking of the exact original filename and byte size passed; a same-size photo with a different filename was rejected. Repeat source recovery on a reachable partial album.
 
 ## RedNote
 
 - [ ] Inspect the installed app for a Story surface. If RedNote Stories are available, add current-Story capture and account-wide collection under the generic Story requirement, then test both video and photo. If that surface is absent, record the observed app version and narrow the requirement in `FEATURES.md`.
-- [ ] Exercise missing-photo Redownload and document-picker relinking on a RedNote album, including an original HEIC photo, and verify file name and actual byte size.
+- [ ] Restore a missing RedNote album photo from the public source after Redownload. In a three-photo album, the original 4284×5712 HEIC was relinked through Android's picker by exact filename and byte size, returning the card to Complete; the other photos remained intact. Redownload reached a first-party redirect with an unsupported three-digit path segment and could not fetch fresh post data. Determine whether a fresh public share link resolves to this same route, then retry on a reachable partial album.
 - [ ] Test multiple public videos after clean-original selection. Record any post that offers only stamped or video-only assets; keep such failures visible rather than saving a branded or silent file.
 
 ## Shared app behavior
