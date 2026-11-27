@@ -10,17 +10,22 @@ public final class DownloadHistoryQueryTest {
         for (int id = 65; id >= 1; id--) {
             boolean instagram = id == 47;
             boolean rednote = id == 3;
-            String source = instagram ? "https://www.instagram.com/reel/Abcdef12345/" :
+            boolean mixed = id == 46;
+            String source = instagram || mixed ? "https://www.instagram.com/reel/Abcdef12345/" :
                 rednote ? "https://www.rednote.com/explore/0123456789abcdef01234567" :
                 "https://www.tiktok.com/@creator/video/7706415465383365909";
-            List<DownloadItem.PhotoItem> photos = rednote ? Collections.singletonList(
+            List<DownloadItem.PhotoItem> photos = mixed ? Collections.singletonList(
+                new DownloadItem.PhotoItem(2, 1080, 1920, 1080, 1920, 4096,
+                    "mixed_video_002.mp4", "content://media/video/46", "", "video/mp4", "", true,
+                    "video", "video/hevc", "audio/mp4a-latm", 7000)) :
+                rednote ? Collections.singletonList(
                 new DownloadItem.PhotoItem(1, 4284, 5712, 4284, 5712, 900000,
                     "full_photo_3.heic", "content://media/photo/3", "", "image/heic", "", true)) :
                 Collections.emptyList();
             items.add(new DownloadItem(id, id, id, 0, 0, 100, 100, 0, 0, 1080, 1920, 0,
-                "complete", "Complete", instagram ? "NASA" : rednote ? "Travel" : "Creator",
+                "complete", "Complete", instagram ? "NASA" : mixed ? "MixedCreator" : rednote ? "Travel" : "Creator",
                 "account" + id, "post" + id, source, "clip" + id + ".mp4", "", "content://media/" + id,
-                "", "video/avc", "audio/mp4a-latm", rednote ? "album" : "video", source,
+                "", "video/avc", "audio/mp4a-latm", rednote || mixed ? "album" : "video", source,
                 instagram ? "Moon landing" : "", instagram ? "Space exploration" : "",
                 instagram ? "#Moon" : "", photos, true));
         }
@@ -49,6 +54,12 @@ public final class DownloadHistoryQueryTest {
             "RedNote account and source search must work");
         check(controller.load("full_photo_3.heic", 0, 0).items.get(0).id == 3,
             "Album photo filenames must be searchable");
+        check(controller.load("mixed_video_002.mp4", 0, 0).items.get(0).id == 46,
+            "Mixed album video filenames must be searchable");
+        check(controller.load("hevc MixedCreator", 0, 0).items.get(0).id == 46,
+            "Album video codec and account terms must combine in search");
+        check("video".equals(controller.load("mixed_video_002.mp4", 0, 0).items.get(0).photos.get(0).kind),
+            "Mixed album video type survives the Downloads snapshot");
         check(controller.load("no-such-post", 0, 0).matchedCount == 0,
             "Search must return an empty result without changing history totals");
         System.out.println("Download history query tests passed");

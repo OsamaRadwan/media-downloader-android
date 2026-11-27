@@ -452,18 +452,23 @@ final class DownloadsPage {
             shownUpdatedAt = entry.updatedAt;
             shownAvailabilityFingerprint = availabilityFingerprint;
             boolean album = "album".equals(entry.mediaType);
+            boolean hasAlbumVideo = false;
+            for (DownloadItem.PhotoItem item : entry.photos)
+                if ("video".equals(item.kind)) { hasAlbumVideo = true; break; }
+            final boolean mixedAlbum = hasAlbumVideo;
             boolean story = entry.sourceUrl.contains("/stories/") || entry.shareUrl.contains("/stories/");
             title.setText(entry.profileName.isEmpty() ?
                 (entry.videoId.isEmpty() ? story ? "Story download" : "Download" :
                     (story ? "Story " : album ? "Album " : "Video ") + entry.videoId) :
                 "@" + entry.profileName + (story ? album ? " • photo Story" : " • video Story" :
-                    album ? entry.photos.isEmpty() ? " • album" :
+                    album ? hasAlbumVideo ? " • media album" : entry.photos.isEmpty() ? " • album" :
                         entry.photos.size() == 1 ? " • photo" : " • photo album" : ""));
             file.setText(entry.fileName.isEmpty() ? story ? "Reading Story details…" : "Reading post details…" : entry.fileName);
             int availablePhotos = 0;
             for (DownloadItem.PhotoItem photo : entry.photos) if (photo.filePresent) availablePhotos++;
             boolean missingMedia = entry.missingFile();
-            state.setText(missingMedia ? album ? "Photos missing or changed" : "Video missing or changed" :
+            state.setText(missingMedia ? album ? mixedAlbum ? "Album items missing or changed" :
+                "Photos missing or changed" : "Video missing or changed" :
                 entry.stage.isEmpty() ? entry.state : entry.stage);
             state.setTextColor(missingMedia || "failed".equals(entry.state) ||
                 "partial".equals(entry.state) ? ERROR : ACCENT);
@@ -485,8 +490,10 @@ final class DownloadsPage {
             }
             String amount;
             if (album && entry.photos.isEmpty()) amount = "No album items saved";
-            else if (album) amount = (entry.photos.size() == 1 && availablePhotos == 1 ? "1 photo on phone" :
-                availablePhotos + " of " + entry.photos.size() + " photos on phone") +
+            else if (album) amount = (entry.photos.size() == 1 && availablePhotos == 1 ?
+                "1 " + (mixedAlbum ? "item" : "photo") + " on phone" :
+                availablePhotos + " of " + entry.photos.size() +
+                    (mixedAlbum ? " items" : " photos") + " on phone") +
                 " • " + bytes(entry.downloadedBytes);
             else {
                 amount = missingMedia ? "Previously downloaded: " + bytes(entry.downloadedBytes) :
@@ -535,23 +542,35 @@ final class DownloadsPage {
             if (entry.isActive() && !expanded) expanded = true;
             toggle.setText(expanded ? "Hide details ▲" : "Show details ▼");
             details.setVisibility(expanded ? View.VISIBLE : View.GONE);
-            boolean canOpen = !album && "complete".equals(entry.state) && entry.savedFilePresent;
+            DownloadItem.PhotoItem firstAlbumVideo = null;
+            if (album) for (DownloadItem.PhotoItem item : entry.photos)
+                if (item.filePresent && "video".equals(item.kind)) { firstAlbumVideo = item; break; }
+            final DownloadItem.PhotoItem availableVideo = firstAlbumVideo;
+            boolean canOpen = (!album && "complete".equals(entry.state) && entry.savedFilePresent) ||
+                availableVideo != null;
             open.setVisibility(canOpen ? View.VISIBLE : View.GONE);
-            open.setOnClickListener(v -> openVideo(entry.savedUri));
+            open.setText(availableVideo == null ? "Open video" : "Open video " + availableVideo.index);
+            open.setOnClickListener(v -> openVideo(availableVideo == null ? entry.savedUri : availableVideo.savedUri));
             DownloadItem.PhotoItem firstPhoto = null;
-            if (album) for (DownloadItem.PhotoItem photo : entry.photos)
-                if (photo.filePresent) { firstPhoto = photo; break; }
+            if (album && !entry.photos.isEmpty() && entry.photos.get(0).filePresent)
+                firstPhoto = entry.photos.get(0);
             final DownloadItem.PhotoItem availablePreview = firstPhoto;
             thumbnail.setClickable(canOpen || availablePreview != null);
-            thumbnail.setContentDescription(availablePreview != null ? "Open downloaded photo" :
+            thumbnail.setContentDescription(availablePreview != null ?
+                "Open downloaded " + availablePreview.kind :
                 canOpen ? "Play downloaded video" : null);
             thumbnail.setOnClickListener(canOpen ? v -> openVideo(entry.savedUri) :
-                availablePreview != null ? v -> openPhoto(availablePreview.savedUri, availablePreview.mime) : null);
+                availablePreview != null ? v -> {
+                    if ("video".equals(availablePreview.kind)) openVideo(availablePreview.savedUri);
+                    else openPhoto(availablePreview.savedUri, availablePreview.mime);
+                } : null);
             boolean canRetry = DownloadRetry.allowed(entry.state, entry.mediaType, availablePhotos,
                 entry.photos.size(), entry.savedFilePresent, entry.shareUrl, entry.sourceUrl, entry.videoId);
             retryButton.setVisibility(canRetry ? View.VISIBLE : View.GONE);
-            retryButton.setText(missingMedia ? album ? "Redownload missing photos" : "Redownload video" :
-                album && !entry.photos.isEmpty() ? "Retry missing photos" : "Retry download");
+            retryButton.setText(missingMedia ? album ?
+                mixedAlbum ? "Redownload missing items" : "Redownload missing photos" : "Redownload video" :
+                album && !entry.photos.isEmpty() ?
+                    mixedAlbum ? "Retry missing items" : "Retry missing photos" : "Retry download");
             retryButton.setEnabled(true);
             retryButton.setOnClickListener(v -> {
                 Intent retry = new Intent(activity, DownloadService.class).putExtra("retryJobId", entry.id);
@@ -568,7 +587,8 @@ final class DownloadsPage {
             int photoFingerprint = 1;
             for (DownloadItem.PhotoItem photo : entry.photos)
                 photoFingerprint = 31 * photoFingerprint +
-                    (photo.savedUri + photo.error + photo.thumbnailPath + photo.filePresent).hashCode();
+                    (photo.savedUri + photo.error + photo.thumbnailPath + photo.filePresent +
+                        photo.kind + photo.videoMime + photo.audioMime + photo.durationMs).hashCode();
             if (shownPhotoFingerprint != photoFingerprint) {
                 shownPhotoFingerprint = photoFingerprint;
                 albumPhotos.removeAllViews();
@@ -584,53 +604,69 @@ final class DownloadsPage {
                         photoPreview.setScaleType(ImageView.ScaleType.CENTER_CROP);
                         photoPreview.setImageBitmap(preview);
                         photoRow.addView(photoPreview, new LinearLayout.LayoutParams(dp(64), dp(64)));
-                        photoPreview.setContentDescription("Open photo " + photo.index);
+                        photoPreview.setContentDescription("Open " + photo.kind + " " + photo.index);
                         if (photo.filePresent)
-                            photoPreview.setOnClickListener(v -> openPhoto(photo.savedUri, photo.mime));
+                            photoPreview.setOnClickListener(v -> {
+                                if ("video".equals(photo.kind)) openVideo(photo.savedUri);
+                                else openPhoto(photo.savedUri, photo.mime);
+                            });
                     }
                 }
-                String label = "Photo " + photo.index + " / " + entry.photos.size() + " • " +
+                String label = ("video".equals(photo.kind) ? "Video " : "Photo ") +
+                    photo.index + " / " + entry.photos.size() + " • " +
                     (photo.filePresent ? bytes(photo.bytes) + " • " + photo.width + " × " + photo.height :
                         !photo.savedUri.isEmpty() ? "missing or changed on phone" :
                         photo.error.isEmpty() ? "waiting" : "failed: " + photo.error);
                 text(photoRow, label, 13, photo.filePresent || photo.error.isEmpty() && photo.savedUri.isEmpty() ?
                     TEXT : ERROR, true, 0);
-                if (photo.filePresent && photo.sourceWidth > 0 && photo.sourceHeight > 0) {
+                if (photo.filePresent && "photo".equals(photo.kind) &&
+                    photo.sourceWidth > 0 && photo.sourceHeight > 0) {
                     boolean matches = PhotoQuality.matchesListed(photo.width, photo.height,
                         photo.sourceWidth, photo.sourceHeight);
                     text(photoRow, matches ? "Matches " + appName + "'s listed resolution" :
                         "Below " + appName + "'s listed " + photo.sourceWidth + " × " + photo.sourceHeight,
                         12, matches ? ACCENT : ERROR, false, 2);
                 }
+                if (photo.filePresent && "video".equals(photo.kind))
+                    text(photoRow, "Video: " + codec(photo.videoMime) + " • Audio: " +
+                        codec(photo.audioMime) + (photo.durationMs > 0 ?
+                            " • " + duration(photo.durationMs / 1000L) : ""),
+                        12, ACCENT, false, 2);
                 if (!photo.fileName.isEmpty()) text(photoRow, photo.fileName, 12, MUTED, false, 2);
                 if (photo.filePresent) {
                     Button openPhoto = new Button(activity);
-                    openPhoto.setText("Open photo");
+                    openPhoto.setText("video".equals(photo.kind) ? "Open video" : "Open photo");
                     openPhoto.setAllCaps(false);
                     openPhoto.setTextSize(12);
                     openPhoto.setMinHeight(0);
                     LinearLayout.LayoutParams photoButton = new LinearLayout.LayoutParams(-2, dp(36));
                     photoButton.topMargin = dp(3);
                     photoRow.addView(openPhoto, photoButton);
-                    openPhoto.setOnClickListener(v -> openPhoto(photo.savedUri, photo.mime));
+                    openPhoto.setOnClickListener(v -> {
+                        if ("video".equals(photo.kind)) openVideo(photo.savedUri);
+                        else openPhoto(photo.savedUri, photo.mime);
+                    });
                 } else if (!photo.fileName.isEmpty() && (photo.bytes > 0 ||
                     "image/jpeg".equals(photo.mime) && photo.width > 0 && photo.height > 0)) {
                     Button findPhoto = new Button(activity);
-                    findPhoto.setText("Find saved photo");
+                    findPhoto.setText("Find saved " + photo.kind);
                     findPhoto.setAllCaps(false);
                     findPhoto.setTextSize(12);
                     findPhoto.setMinHeight(0);
                     LinearLayout.LayoutParams photoButton = new LinearLayout.LayoutParams(-2, dp(36));
                     photoButton.topMargin = dp(3);
                     photoRow.addView(findPhoto, photoButton);
-                    findPhoto.setOnClickListener(v -> pickRestoredFile(entry.id, photo.index, "image/*"));
+                    findPhoto.setOnClickListener(v -> pickRestoredFile(entry.id, photo.index,
+                        "video".equals(photo.kind) ? "video/*" : "image/*"));
                 }
             }
             }
             albumPhotos.setVisibility(album && expanded ? View.VISIBLE : View.GONE);
-            if (!entry.thumbnailPath.equals(shownThumbnail)) {
-                shownThumbnail = entry.thumbnailPath;
-                Bitmap image = entry.thumbnailPath.isEmpty() ? null : BitmapFactory.decodeFile(entry.thumbnailPath);
+            String visibleThumbnail = album && !entry.photos.isEmpty() &&
+                !entry.photos.get(0).filePresent ? "" : entry.thumbnailPath;
+            if (!visibleThumbnail.equals(shownThumbnail)) {
+                shownThumbnail = visibleThumbnail;
+                Bitmap image = visibleThumbnail.isEmpty() ? null : BitmapFactory.decodeFile(visibleThumbnail);
                 if (image == null) {
                     thumbnail.setImageResource(android.R.drawable.ic_menu_gallery);
                     thumbnail.setColorFilter(MUTED);

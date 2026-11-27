@@ -125,18 +125,40 @@ final class DownloadThumbnail {
             options.inSampleSize = Math.max(1, Math.max(bounds.outWidth, bounds.outHeight) / 200);
             Bitmap image = BitmapFactory.decodeFile(imageFile.getAbsolutePath(), options);
             if (image == null) return "";
-            File directory = new File(context.getFilesDir(), "download_thumbnails");
-            if (!directory.isDirectory() && !directory.mkdirs()) return "";
-            File output = new File(directory, jobId + "-photo-" + index + ".jpg");
-            try (FileOutputStream stream = new FileOutputStream(output)) {
-                if (!image.compress(Bitmap.CompressFormat.JPEG, 78, stream)) return "";
-            } finally { image.recycle(); }
-            return output.getAbsolutePath();
+            return saveAlbumPreview(context, jobId, index, image);
         } catch (Exception error) {
             DiagnosticsStore.record(context, "thumbnail.photo job=" + jobId + " index=" + index, error);
             Log.d("MediaDownloader", "Could not make photo thumbnail " + index, error);
             return "";
         }
+    }
+
+    static String fromAlbumVideo(Context context, int jobId, int index, Uri uri) {
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(context, uri);
+            Bitmap frame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+            return frame == null ? "" : saveAlbumPreview(context, jobId, index, frame);
+        } catch (Exception error) {
+            DiagnosticsStore.record(context, "thumbnail.album_video job=" + jobId + " index=" + index, error);
+            Log.d("MediaDownloader", "Could not make album video thumbnail " + index, error);
+            return "";
+        } finally {
+            try { retriever.release(); }
+            catch (Exception ignored) { }
+        }
+    }
+
+    private static String saveAlbumPreview(Context context, int jobId, int index, Bitmap image) throws Exception {
+        try {
+            File directory = new File(context.getFilesDir(), "download_thumbnails");
+            if (!directory.isDirectory() && !directory.mkdirs()) return "";
+            File output = new File(directory, jobId + "-photo-" + index + ".jpg");
+            try (FileOutputStream stream = new FileOutputStream(output)) {
+                if (!image.compress(Bitmap.CompressFormat.JPEG, 78, stream)) return "";
+            }
+            return output.getAbsolutePath();
+        } finally { image.recycle(); }
     }
 
     static void fromUri(Context context, int jobId, Uri uri) {

@@ -134,7 +134,8 @@ final class PreferencesDownloadRepository implements DownloadRepository {
                 DownloadThumbnail.ensureAlbumPhotoAsync(context, entry.id, photo.index, resolved);
             photos.add(new DownloadItem.PhotoItem(photo.index, photo.width, photo.height,
                 photo.sourceWidth, photo.sourceHeight, photo.bytes, photo.fileName,
-                present ? resolved : photo.savedUri, photo.error, photo.mime, photo.thumbnailPath, present));
+                present ? resolved : photo.savedUri, photo.error, photo.mime, photo.thumbnailPath,
+                present, photo.kind, photo.videoMime, photo.audioMime, photo.durationMs));
         }
         String resolved = verifyFiles ? resolvedUri(entry.savedUri, entry.fileName,
             entry.downloadedBytes > 0 ? entry.downloadedBytes : entry.totalBytes) : entry.savedUri;

@@ -23,9 +23,23 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
-/** Transfers each image in an ordered album while retaining successful files on partial failure. */
+/** Transfers ordered album items while retaining successful files on partial failure. */
 final class AlbumTransfer {
-    interface Progress { void changed(DownloadStore.Entry entry, int current, int total); }
+    interface Progress { void changed(DownloadStore.Entry entry, int current, int total, boolean durable); }
+    interface VideoDownloader {
+        VideoFile download(StreamResolver.AlbumItem item, String name, long savedBytes) throws Exception;
+    }
+
+    static final class VideoFile {
+        final Uri uri;
+        final String name, thumbnailPath;
+        final long bytes;
+        final MediaMux.Tracks tracks;
+        VideoFile(Uri uri, String name, String thumbnailPath, long bytes, MediaMux.Tracks tracks) {
+            this.uri = uri; this.name = name; this.thumbnailPath = thumbnailPath;
+            this.bytes = bytes; this.tracks = tracks;
+        }
+    }
 
     static final class Summary {
         final int complete, failed;
@@ -35,58 +49,91 @@ final class AlbumTransfer {
     private AlbumTransfer() { }
 
     static Summary download(Context context, StreamResolver.Result result, DownloadStore.Entry entry,
-                            Progress progress) throws Exception {
+                            Progress progress, VideoDownloader videoDownloader) throws Exception {
         if (!result.isAlbum()) throw new IllegalArgumentException("Post is not an album");
-        if (result.hasAlbumVideos())
-            throw new Exception("Mixed photo and video albums are not supported yet; no new item was saved");
-        if (!entry.photos.isEmpty() && entry.photos.size() != result.photos.size())
+        if (result.hasAlbumVideos() && videoDownloader == null)
+            throw new IllegalArgumentException("Album video transfer is unavailable");
+        if (!entry.photos.isEmpty() && entry.photos.size() != result.albumItems.size())
             throw new Exception("Album changed since the earlier download; retry as a new job");
-        if (entry.photos.isEmpty()) for (StreamResolver.PhotoCandidate candidate : result.photos)
-            entry.photos.add(new DownloadStore.Entry.Photo(candidate.index));
+        if (entry.photos.isEmpty()) for (StreamResolver.AlbumItem item : result.albumItems) {
+            DownloadStore.Entry.Photo record = new DownloadStore.Entry.Photo(item.index);
+            record.kind = item.video == null ? "photo" : "video";
+            entry.photos.add(record);
+        }
+        for (StreamResolver.AlbumItem item : result.albumItems) {
+            DownloadStore.Entry.Photo record = entry.photos.get(item.index - 1);
+            if (record.index != item.index || !record.kind.equals(item.video == null ? "photo" : "video"))
+                throw new Exception("Album items changed since the earlier download; retry as a new job");
+        }
         entry.mediaType = "album";
-        entry.fileName = result.photos.size() + " photos • post " + result.videoId;
+        entry.fileName = result.hasAlbumVideos() ? result.albumItems.size() + " items • post " + result.videoId :
+            result.photos.size() + " photos • post " + result.videoId;
         entry.totalBytes = -1;
-        progress.changed(entry, 0, result.photos.size());
-        for (StreamResolver.PhotoCandidate candidate : result.photos) {
-            DownloadStore.Entry.Photo photo = entry.photos.get(candidate.index - 1);
+        progress.changed(entry, 0, result.albumItems.size(), false);
+        for (StreamResolver.AlbumItem item : result.albumItems) {
+            DownloadStore.Entry.Photo photo = entry.photos.get(item.index - 1);
             if (!photo.savedUri.isEmpty()) continue;
-            entry.stage = "Photo " + candidate.index + " of " + result.photos.size();
+            entry.stage = (item.video == null ? "Photo " : "Video ") + item.index +
+                " of " + result.albumItems.size();
             entry.state = "downloading";
             photo.error = "";
-            progress.changed(entry, candidate.index, result.photos.size());
-            File firstFile = new File(context.getCacheDir(), "photo-" + entry.id + "-" + candidate.index + "-a");
-            File secondFile = new File(context.getCacheDir(), "photo-" + entry.id + "-" + candidate.index + "-b");
+            progress.changed(entry, item.index, result.albumItems.size(), false);
             try {
-                Selection selection = selectBest(context, result, entry, candidate, progress, firstFile, secondFile);
-                PhotoFile image = selection.image;
-                File selected = selection.file;
-                if ("image/jpeg".equals(image.mime)) tagJpeg(context, selected, result);
-                String name = fileName(result, candidate.index, image.extension);
-                Saved saved = save(context, selected, name, image.mime);
-                photo.fileName = saved.name;
-                photo.savedUri = saved.uri.toString();
-                photo.mime = image.mime;
-                photo.width = image.width;
-                photo.height = image.height;
-                photo.sourceWidth = candidate.width;
-                photo.sourceHeight = candidate.height;
-                photo.bytes = selected.length();
-                photo.thumbnailPath = DownloadThumbnail.fromAlbumPhoto(context, entry.id, candidate.index, selected);
-                entry.downloadedBytes = savedBytes(entry);
-                if (candidate.index == 1) DownloadThumbnail.fromImage(context, entry.id, selected);
-                Log.i("MediaDownloader", "Saved album photo " + candidate.index + "/" + result.photos.size() +
-                    " " + saved.name + " " + image.width + "x" + image.height +
-                    " listed=" + candidate.width + "x" + candidate.height);
+                if (item.video != null) {
+                    VideoFile saved = videoDownloader.download(item,
+                        videoFileName(result, item.index), savedBytes(entry));
+                    photo.fileName = saved.name;
+                    photo.savedUri = saved.uri.toString();
+                    photo.mime = "video/mp4";
+                    photo.width = saved.tracks.width;
+                    photo.height = saved.tracks.height;
+                    photo.sourceWidth = item.video.get(0).width;
+                    photo.sourceHeight = item.video.get(0).height;
+                    photo.bytes = saved.bytes;
+                    photo.durationMs = saved.tracks.durationMs;
+                    photo.videoMime = saved.tracks.videoMime;
+                    photo.audioMime = saved.tracks.audioMime;
+                    photo.thumbnailPath = saved.thumbnailPath;
+                    Log.i("MediaDownloader", "Saved album video " + item.index + "/" +
+                        result.albumItems.size() + " " + saved.name + " " + photo.width + "x" + photo.height);
+                } else {
+                    StreamResolver.PhotoCandidate candidate = item.photo;
+                    File firstFile = new File(context.getCacheDir(), "photo-" + entry.id + "-" + item.index + "-a");
+                    File secondFile = new File(context.getCacheDir(), "photo-" + entry.id + "-" + item.index + "-b");
+                    try {
+                        Selection selection = selectBest(context, result, entry, candidate, progress, firstFile, secondFile);
+                        PhotoFile image = selection.image;
+                        File selected = selection.file;
+                        if ("image/jpeg".equals(image.mime)) tagJpeg(context, selected, result);
+                        String name = fileName(result, item.index, image.extension);
+                        Saved saved = save(context, selected, name, image.mime);
+                        photo.fileName = saved.name;
+                        photo.savedUri = saved.uri.toString();
+                        photo.mime = image.mime;
+                        photo.width = image.width;
+                        photo.height = image.height;
+                        photo.sourceWidth = candidate.width;
+                        photo.sourceHeight = candidate.height;
+                        photo.bytes = selected.length();
+                        photo.thumbnailPath = DownloadThumbnail.fromAlbumPhoto(context, entry.id, item.index, selected);
+                        entry.downloadedBytes = savedBytes(entry);
+                        if (item.index == 1) DownloadThumbnail.fromImage(context, entry.id, selected);
+                        Log.i("MediaDownloader", "Saved album photo " + item.index + "/" + result.albumItems.size() +
+                            " " + saved.name + " " + image.width + "x" + image.height +
+                            " listed=" + candidate.width + "x" + candidate.height);
+                    } finally {
+                        firstFile.delete();
+                        secondFile.delete();
+                    }
+                }
             } catch (Exception error) {
-                photo.error = error.getMessage() == null ? "Image unavailable" : error.getMessage();
-                DiagnosticsStore.record(context, "album.photo job=" + entry.id + " index=" + candidate.index, error);
-                Log.w("MediaDownloader", "Album photo " + candidate.index + " failed", error);
+                photo.error = error.getMessage() == null ? "Media unavailable" : error.getMessage();
+                DiagnosticsStore.record(context, "album.item job=" + entry.id + " index=" + item.index, error);
+                Log.w("MediaDownloader", "Album item " + item.index + " failed", error);
             } finally {
-                firstFile.delete();
-                secondFile.delete();
                 entry.downloadedBytes = savedBytes(entry);
                 entry.speedBytesPerSecond = 0;
-                progress.changed(entry, candidate.index, result.photos.size());
+                progress.changed(entry, item.index, result.albumItems.size(), true);
             }
         }
         int complete = 0;
@@ -200,7 +247,7 @@ final class AlbumTransfer {
                     if (now - previousTime >= 800) {
                         entry.downloadedBytes = savedBytes(entry) + written;
                         entry.speedBytesPerSecond = (written - previousBytes) * 1000 / Math.max(1, now - previousTime);
-                        progress.changed(entry, candidate.index, result.photos.size());
+                        progress.changed(entry, candidate.index, result.albumItems.size(), false);
                         previousBytes = written;
                         previousTime = now;
                     }
@@ -297,7 +344,14 @@ final class AlbumTransfer {
             .format(new Date(result.publishTimeSeconds * 1000L));
         String idLabel = result.pageUrl.contains("/stories/") ? "StoryID" : "PostID";
         return String.format(Locale.US, "%s_profile_%s_%s_%s_%s_photo_%03d-of-%03d.%s",
-            result.profileName, result.accountId, idLabel, result.videoId, date, index, result.photos.size(), extension);
+            result.profileName, result.accountId, idLabel, result.videoId, date, index, result.albumItems.size(), extension);
+    }
+
+    private static String videoFileName(StreamResolver.Result result, int index) {
+        String date = new SimpleDateFormat("yyyy-MM-dd_hh-mm", Locale.US)
+            .format(new Date(result.publishTimeSeconds * 1000L));
+        return String.format(Locale.US, "%s_profile_%s_PostID_%s_%s_video_%03d-of-%03d.mp4",
+            result.profileName, result.accountId, result.videoId, date, index, result.albumItems.size());
     }
 
     static final class PhotoFile {

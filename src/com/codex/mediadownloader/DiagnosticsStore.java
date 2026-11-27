@@ -187,18 +187,33 @@ final class DiagnosticsStore {
                     if (!photo.savedUri.isEmpty()) saved++;
                     if (!photo.error.isEmpty()) failed++;
                 }
-                writer.write("  Photos: " + saved + " saved, " + failed + " with errors, " + job.photos.size() + " total\n");
+                writer.write("  Album items: " + saved + " saved, " + failed +
+                    " with errors, " + job.photos.size() + " total\n");
                 int details = 0;
                 for (DownloadStore.Entry.Photo photo : job.photos) {
-                    if (photo.error.isEmpty() || details++ >= 10) continue;
-                    writer.write("  Photo " + photo.index + " listed=" + photo.sourceWidth + "x" + photo.sourceHeight +
-                        " actual=" + photo.width + "x" + photo.height +
-                        " error=" + DiagnosticsFormat.clean(photo.error) + "\n");
+                    if (photo.error.isEmpty()) continue;
+                    if (details++ >= 10) break;
+                    writeAlbumItem(writer, photo);
+                }
+                for (DownloadStore.Entry.Photo photo : job.photos) {
+                    if (!photo.error.isEmpty()) continue;
+                    if (details++ >= 10) break;
+                    writeAlbumItem(writer, photo);
                 }
             }
         }
         if (shown == 0) writer.write("No recent active or unsuccessful jobs.\n");
         writer.write("\n");
+    }
+
+    private static void writeAlbumItem(OutputStreamWriter writer, DownloadStore.Entry.Photo item) throws Exception {
+        writer.write("  " + item.kind + " " + item.index +
+            " listed=" + item.sourceWidth + "x" + item.sourceHeight +
+            " actual=" + item.width + "x" + item.height +
+            " bytes=" + item.bytes +
+            " video=" + DiagnosticsFormat.clean(item.videoMime) +
+            " audio=" + DiagnosticsFormat.clean(item.audioMime) +
+            " error=" + DiagnosticsFormat.clean(item.error) + "\n");
     }
 
     private static String sourceAppVersion(Context context, String packageName) {

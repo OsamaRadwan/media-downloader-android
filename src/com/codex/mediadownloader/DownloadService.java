@@ -33,6 +33,7 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -156,7 +157,7 @@ public class DownloadService extends Service {
         }
         entry.state = "queued";
         entry.stage = retry == null ? "Waiting to start" :
-            retry.photos.isEmpty() ? "Retrying download" : "Retrying missing photos";
+            retry.photos.isEmpty() ? "Retrying download" : "Retrying missing album items";
         entry.error = "";
         entry.finishedAt = 0;
         DownloadStore.save(this, entry, true);
@@ -230,31 +231,41 @@ public class DownloadService extends Service {
             DiagnosticsStore.trace(this, "download.resolved", "job=" + jobId +
                 " kind=" + (result.isAlbum() ? "album" : "video") +
                 " streams=" + result.candidates.size() + " photos=" + result.photos.size() +
+                " items=" + result.albumItems.size() +
                 " visitorCookies=" + result.cookies.getCookieStore().getCookies().size());
             if (result.isAlbum()) {
                 final String albumTitle = title;
                 entry.mediaType = "album";
-                if (result.hasAlbumVideos()) {
-                    entry.fileName = result.albumItems.size() + " items • post " + result.videoId;
-                    throw new Exception("Mixed photo and video albums are not supported yet; no new item was saved");
-                }
+                fileName = result.albumItems.size() + (result.hasAlbumVideos() ? " items • post " :
+                    " photos • post ") + result.videoId;
                 entry.state = "selecting";
-                entry.stage = result.photos.size() == 1 ? "Preparing photo" :
-                    "Preparing " + result.photos.size() + " photos";
+                entry.stage = result.albumItems.size() == 1 ?
+                    (result.albumItems.get(0).video == null ? "Preparing photo" : "Preparing video") :
+                    "Preparing " + result.albumItems.size() + (result.hasAlbumVideos() ? " items" : " photos");
                 DownloadStore.save(this, entry, true);
-                AlbumTransfer.Summary summary = AlbumTransfer.download(this, result, entry, (changed, current, total) -> {
-                    DownloadStore.save(this, changed, false);
+                AlbumTransfer.Summary summary = AlbumTransfer.download(this, result, entry, (changed, current, total, durable) -> {
+                    DownloadStore.save(this, changed, durable);
                     notifications.notify(jobId, albumNotice(jobId, albumTitle, changed, current, total));
+                }, (item, name, savedBytes) -> {
+                    SavedVideo saved = transfer(result, item.video, jobId, albumTitle, name,
+                        entry, savedBytes, item.index);
+                    return new AlbumTransfer.VideoFile(saved.uri, saved.name,
+                        DownloadThumbnail.fromAlbumVideo(this, jobId, item.index, saved.uri),
+                        saved.bytes, saved.tracks);
                 });
                 entry.state = summary.failed == 0 ? "complete" : summary.complete == 0 ? "failed" : "partial";
-                entry.stage = result.photos.size() == 1 && summary.complete == 1 ? "Photo saved" :
-                    summary.complete + " of " + result.photos.size() + " photos saved";
-                entry.error = summary.failed == 0 ? "" : summary.failed + " photo" + (summary.failed == 1 ? "" : "s") + " failed";
+                String unit = result.hasAlbumVideos() ? "items" : "photos";
+                entry.stage = result.albumItems.size() == 1 && summary.complete == 1 ?
+                    (result.albumItems.get(0).video == null ? "Photo saved" : "Video saved") :
+                    summary.complete + " of " + result.albumItems.size() + " " + unit + " saved";
+                entry.error = summary.failed == 0 ? "" : summary.failed + " " +
+                    (result.hasAlbumVideos() ? "item" : "photo") + (summary.failed == 1 ? "" : "s") + " failed";
                 entry.speedBytesPerSecond = 0;
                 entry.finishedAt = System.currentTimeMillis();
                 DownloadStore.save(this, entry, true);
-                String resultTitle = result.photos.size() == 1 ?
-                    summary.failed == 0 ? "Photo complete" : "Photo failed" :
+                String resultTitle = result.albumItems.size() == 1 ?
+                    (result.albumItems.get(0).video == null ? "Photo" : "Video") +
+                        (summary.failed == 0 ? " complete" : " failed") :
                     summary.failed == 0 ? "Album complete" : "Album incomplete";
                 notifications.notify(-jobId, resultNotice(resultTitle, entry.stage,
                     "Post: " + result.pageUrl + "\n" + entry.stage + "\nSize: " + formatBytes(entry.downloadedBytes), jobId));
@@ -269,7 +280,7 @@ public class DownloadService extends Service {
             DownloadStore.save(this, entry, true);
             DownloadThumbnail.fetchAsync(this, jobId, result.coverUrl);
             notifications.notify(jobId, detailNotice(jobId, title, fileName, "Selecting stream", 0, 0, -1, -1, null));
-            SavedVideo saved = transfer(result, jobId, title, fileName, entry);
+            SavedVideo saved = transfer(result, result.candidates, jobId, title, fileName, entry, 0, 0);
             entry.state = "complete";
             entry.stage = "Complete";
             entry.fileName = saved.name;
@@ -378,10 +389,11 @@ public class DownloadService extends Service {
         new Handler(Looper.getMainLooper()).post(() -> Toast.makeText(this, message, Toast.LENGTH_SHORT).show());
     }
 
-    private SavedVideo transfer(StreamResolver.Result result, int jobId, String title, String fileName,
-                                DownloadStore.Entry entry) throws Exception {
+    private SavedVideo transfer(StreamResolver.Result result, List<StreamResolver.Candidate> candidates,
+                                int jobId, String title, String fileName, DownloadStore.Entry entry,
+                                long savedBytes, int albumIndex) throws Exception {
         String videoId = result.videoId;
-        File video = new File(getCacheDir(), "video-" + videoId + "-" + jobId + ".mp4");
+        File video = new File(getCacheDir(), "video-" + videoId + "-" + jobId + "-" + albumIndex + ".mp4");
         Uri pending = null;
         try {
             MediaMux.Tracks tracks = null;
@@ -391,14 +403,16 @@ public class DownloadService extends Service {
             int accessDenied = 0;
             int noAudio = 0;
             String lastError = null;
-            for (StreamResolver.Candidate candidate : result.candidates) {
+            for (StreamResolver.Candidate candidate : candidates) {
                 if (videoOnlyVariants.contains(candidate.variant) || !tried.add(candidate.url)) continue;
                 option++;
                 try {
                     entry.streamOption = option;
-                    entry.width = candidate.width;
-                    entry.height = candidate.height;
-                    entry.downloadedBytes = 0;
+                    if (albumIndex == 0) {
+                        entry.width = candidate.width;
+                        entry.height = candidate.height;
+                    }
+                    entry.downloadedBytes = savedBytes;
                     entry.totalBytes = -1;
                     entry.speedBytesPerSecond = 0;
                     entry.state = "connecting";
@@ -412,11 +426,12 @@ public class DownloadService extends Service {
                             "origin".equals(candidate.variant) ? 2 : 0;
                         fetch(candidate.url, result.pageUrl, result.cookies, publicProfile, false, video,
                             "Downloading stream • option " + option, jobId, title, fileName,
-                            candidate.width, candidate.height, entry);
+                            candidate.width, candidate.height, entry, savedBytes, albumIndex);
                         Log.i("MediaDownloader", "Stream option " + option + " downloaded without visitor cookies");
                     } catch (Exception publicError) {
                         accessError = publicError;
-                        DiagnosticsStore.record(this, "stream.public job=" + jobId + " option=" + option, publicError);
+                        DiagnosticsStore.record(this, "stream.public job=" + jobId + " item=" + albumIndex +
+                            " option=" + option, publicError);
                         video.delete();
                         if (!"tiktok".equals(result.platform) ||
                             !MediaRequestCookies.retryWithVisitorCookies(publicError)) throw publicError;
@@ -424,12 +439,13 @@ public class DownloadService extends Service {
                             try {
                                 fetch(candidate.url, result.pageUrl, result.cookies, profile, true, video,
                                     "Downloading stream • option " + option, jobId, title, fileName,
-                                    candidate.width, candidate.height, entry);
+                                    candidate.width, candidate.height, entry, savedBytes, albumIndex);
                                 accessError = null;
                                 break;
                             } catch (Exception error) {
                                 accessError = error;
-                                DiagnosticsStore.record(this, "stream.visitor job=" + jobId + " option=" + option + " profile=" + profile, error);
+                                DiagnosticsStore.record(this, "stream.visitor job=" + jobId + " item=" + albumIndex +
+                                    " option=" + option + " profile=" + profile, error);
                                 Log.w("MediaDownloader", "Stream option " + option + " visitor profile " + profile +
                                     " failed: " + error.getMessage());
                                 video.delete();
@@ -454,14 +470,16 @@ public class DownloadService extends Service {
                         " listed=" + candidate.width + "x" + candidate.height +
                         " actual=" + tracks.width + "x" + tracks.height +
                         " video=" + tracks.videoMime + " audio=" + tracks.audioMime);
-                    DiagnosticsStore.trace(this, "video.selected", "job=" + jobId + " option=" + option +
+                    DiagnosticsStore.trace(this, "video.selected", "job=" + jobId + " item=" + albumIndex +
+                        " option=" + option +
                         " host=" + new URL(candidate.url).getHost() +
                         " listed=" + candidate.width + "x" + candidate.height +
                         " actual=" + tracks.width + "x" + tracks.height +
                         " video=" + tracks.videoMime + " audio=" + tracks.audioMime);
                     break;
                 } catch (Exception candidateError) {
-                    DiagnosticsStore.record(this, "stream.candidate job=" + jobId + " option=" + option, candidateError);
+                    DiagnosticsStore.record(this, "stream.candidate job=" + jobId + " item=" + albumIndex +
+                        " option=" + option, candidateError);
                     lastError = candidateError.getMessage();
                     if (lastError != null && lastError.contains("HTTP 403")) accessDenied++;
                     if (lastError != null && lastError.contains("audio")) noAudio++;
@@ -470,7 +488,7 @@ public class DownloadService extends Service {
                     video.delete();
                     entry.state = "retrying";
                     entry.stage = "Trying another stream";
-                    entry.downloadedBytes = 0;
+                    entry.downloadedBytes = savedBytes;
                     entry.totalBytes = -1;
                     entry.speedBytesPerSecond = 0;
                     DownloadStore.save(this, entry, false);
@@ -499,15 +517,17 @@ public class DownloadService extends Service {
             tracks = taggedTracks;
             entry.state = "saving";
             entry.stage = "Saving to Downloads";
-            entry.width = tracks.width;
-            entry.height = tracks.height;
-            entry.videoMime = tracks.videoMime;
-            entry.audioMime = tracks.audioMime;
-            entry.durationMs = tracks.durationMs;
-            entry.downloadedBytes = video.length();
-            entry.totalBytes = video.length();
+            if (albumIndex == 0) {
+                entry.width = tracks.width;
+                entry.height = tracks.height;
+                entry.videoMime = tracks.videoMime;
+                entry.audioMime = tracks.audioMime;
+                entry.durationMs = tracks.durationMs;
+            }
+            entry.downloadedBytes = savedBytes + video.length();
+            entry.totalBytes = albumIndex == 0 ? video.length() : -1;
             DownloadStore.save(this, entry, false);
-            DownloadThumbnail.fromVideo(this, jobId, video);
+            if (albumIndex == 0 || albumIndex == 1) DownloadThumbnail.fromVideo(this, jobId, video);
             notifications.notify(jobId, detailNotice(jobId, title, fileName, "Saving to Downloads", tracks.width, tracks.height,
                 video.length(), video.length(), tracks));
             ContentValues values = new ContentValues();
@@ -554,7 +574,8 @@ public class DownloadService extends Service {
     private void fetch(String url, String referer, java.net.CookieManager cookies, int profile,
                        boolean visitorCookies,
                        File file, String label, int jobId, String title, String fileName,
-                       int width, int height, DownloadStore.Entry entry) throws Exception {
+                       int width, int height, DownloadStore.Entry entry, long savedBytes,
+                       int albumIndex) throws Exception {
         HttpEngine engine = profile == 5 && !NetworkRouteStore.usesProxy() ? new HttpEngine.Builder(this).build() : null;
         HttpURLConnection connection = engine == null ? NetworkRouteStore.open(new URL(url)) :
             (HttpURLConnection) engine.openConnection(new URL(url));
@@ -571,12 +592,12 @@ public class DownloadService extends Service {
         if (profile == 4) connection.setRequestProperty("Range", "bytes=0-");
         MediaRequestCookies.attach(connection, cookies, visitorCookies);
         long requestStarted = SystemClock.elapsedRealtime();
-        DiagnosticsStore.trace(this, "video.request", "job=" + jobId +
+        DiagnosticsStore.trace(this, "video.request", "job=" + jobId + " item=" + albumIndex +
             " host=" + connection.getURL().getHost() + " mode=" + (visitorCookies ? "visitor" : "public") +
             " profile=" + profile + " listed=" + width + "x" + height);
         try {
             int code = connection.getResponseCode();
-            DiagnosticsStore.trace(this, "video.response", "job=" + jobId +
+            DiagnosticsStore.trace(this, "video.response", "job=" + jobId + " item=" + albumIndex +
                 " host=" + connection.getURL().getHost() + " http=" + code +
                 " type=" + connection.getContentType() + " bytes=" + connection.getContentLengthLong() +
                 " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStarted));
@@ -586,7 +607,7 @@ public class DownloadService extends Service {
             long total = connection.getContentLengthLong();
             entry.state = "downloading";
             entry.stage = label;
-            entry.totalBytes = total;
+            entry.totalBytes = albumIndex > 0 ? -1 : total;
             DownloadStore.save(this, entry, false);
             notifications.notify(jobId, detailNotice(jobId, title, fileName, label, width, height, 0, total, null));
             try (InputStream input = connection.getInputStream(); OutputStream output = new FileOutputStream(file)) {
@@ -611,7 +632,7 @@ public class DownloadService extends Service {
                     written += count;
                     long now = SystemClock.elapsedRealtime();
                     if (now - lastUpdate >= 800) {
-                        entry.downloadedBytes = written;
+                        entry.downloadedBytes = savedBytes + written;
                         entry.speedBytesPerSecond = Math.max(0, (written - lastBytes) * 1000 / (now - lastUpdate));
                         DownloadStore.save(this, entry, false);
                         notifications.notify(jobId, detailNotice(jobId, title, fileName, label, width, height, written, total, null));
@@ -621,11 +642,12 @@ public class DownloadService extends Service {
                 }
                 output.flush();
                 if (written < 1024) throw new Exception(label + " was unexpectedly short");
-                entry.downloadedBytes = written;
-                entry.totalBytes = total > 0 ? total : written;
+                entry.downloadedBytes = savedBytes + written;
+                entry.totalBytes = albumIndex > 0 ? -1 : total > 0 ? total : written;
                 entry.speedBytesPerSecond = 0;
                 DownloadStore.save(this, entry, false);
-                DiagnosticsStore.trace(this, "video.received", "job=" + jobId + " bytes=" + written +
+                DiagnosticsStore.trace(this, "video.received", "job=" + jobId + " item=" + albumIndex +
+                    " bytes=" + written +
                     " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStarted));
                 notifications.notify(jobId, detailNotice(jobId, title, fileName, "Stream received", width, height, written, total, null));
             }
@@ -720,8 +742,12 @@ public class DownloadService extends Service {
                                      int current, int total) {
         int saved = 0;
         for (DownloadStore.Entry.Photo photo : entry.photos) if (!photo.savedUri.isEmpty()) saved++;
-        String detail = "Photo " + Math.min(current, total) + " of " + total +
-            " • " + saved + " saved • " + formatBytes(entry.downloadedBytes);
+        String kind = current > 0 && current <= entry.photos.size() ?
+            entry.photos.get(current - 1).kind : "item";
+        String detail = current < 1 ? "Preparing album • " + saved + " of " + total + " saved" :
+            Character.toUpperCase(kind.charAt(0)) + kind.substring(1) + " " +
+                Math.min(current, total) + " of " + total +
+                " • " + saved + " saved • " + formatBytes(entry.downloadedBytes);
         return new Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)

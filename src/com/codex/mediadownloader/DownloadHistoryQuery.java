@@ -46,6 +46,7 @@ final class DownloadHistoryQuery {
         if (item.createdAt > 0) add(text, date(item.createdAt));
         for (DownloadItem.PhotoItem photo : item.photos) {
             add(text, photo.fileName); add(text, photo.mime); add(text, photo.error);
+            add(text, photo.kind); add(text, photo.videoMime); add(text, photo.audioMime);
             add(text, photo.width + "x" + photo.height);
         }
         return text.toString().toLowerCase(Locale.ROOT);

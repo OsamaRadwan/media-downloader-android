@@ -33,13 +33,17 @@ final class DownloadStore {
         static final class Photo {
             final int index;
             String fileName = "", savedUri = "", error = "", mime = "", thumbnailPath = "";
+            String kind = "photo", videoMime = "", audioMime = "";
             long bytes;
+            long durationMs;
             int width, height, sourceWidth, sourceHeight;
             Photo(int index) { this.index = index; }
             JSONObject toJson() throws JSONException {
                 JSONObject json = new JSONObject();
                 json.put("index", index); json.put("fileName", fileName); json.put("savedUri", savedUri);
                 json.put("error", error); json.put("mime", mime); json.put("bytes", bytes);
+                json.put("kind", kind); json.put("videoMime", videoMime);
+                json.put("audioMime", audioMime); json.put("durationMs", durationMs);
                 json.put("thumbnailPath", thumbnailPath);
                 json.put("width", width); json.put("height", height);
                 json.put("sourceWidth", sourceWidth); json.put("sourceHeight", sourceHeight);
@@ -51,6 +55,10 @@ final class DownloadStore {
                 photo.savedUri = json.optString("savedUri", "");
                 photo.error = json.optString("error", "");
                 photo.mime = json.optString("mime", "");
+                photo.kind = "video".equals(json.optString("kind", "photo")) ? "video" : "photo";
+                photo.videoMime = json.optString("videoMime", "");
+                photo.audioMime = json.optString("audioMime", "");
+                photo.durationMs = json.optLong("durationMs", 0);
                 photo.thumbnailPath = json.optString("thumbnailPath", "");
                 photo.bytes = json.optLong("bytes", 0);
                 photo.width = json.optInt("width", 0);

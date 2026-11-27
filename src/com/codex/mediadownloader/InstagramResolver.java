@@ -350,10 +350,17 @@ final class InstagramResolver {
         if (edges != null) {
             if (edges.length() == 0 || edges.length() > 100)
                 throw new Exception("Instagram album has an invalid number of items");
+            Set<String> childIds = new LinkedHashSet<>();
             for (int i = 0; i < edges.length(); i++) {
                 JSONObject edge = edges.optJSONObject(i);
                 JSONObject child = edge == null ? null : edge.optJSONObject("node");
                 if (child == null) throw new Exception("Instagram album item is missing");
+                JSONObject childOwner = child.optJSONObject("owner");
+                if (childOwner != null && !account.equals(childOwner.optString("id", account)))
+                    throw new Exception("Instagram album item belongs to another account");
+                String childId = child.optString("id", "");
+                if (!childId.isEmpty() && (!childId.matches("[0-9]{1,24}") || !childIds.add(childId)))
+                    throw new Exception("Instagram album has an invalid or repeated item ID");
                 if (child.optBoolean("is_video"))
                     albumItems.add(StreamResolver.AlbumItem.video(i + 1, videoCandidates(child, i + 1)));
                 else {

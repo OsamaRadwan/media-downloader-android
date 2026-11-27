@@ -19,8 +19,8 @@ final class DownloadItem {
 
     static final class PhotoItem {
         final int index, width, height, sourceWidth, sourceHeight;
-        final long bytes;
-        final String fileName, savedUri, error, mime, thumbnailPath;
+        final long bytes, durationMs;
+        final String fileName, savedUri, error, mime, thumbnailPath, kind, videoMime, audioMime;
         final boolean filePresent;
         PhotoItem(int index, int width, int height, int sourceWidth, int sourceHeight, long bytes, String fileName,
                   String savedUri, String error, String mime, String thumbnailPath) {
@@ -29,11 +29,19 @@ final class DownloadItem {
         }
         PhotoItem(int index, int width, int height, int sourceWidth, int sourceHeight, long bytes, String fileName,
                   String savedUri, String error, String mime, String thumbnailPath, boolean filePresent) {
+            this(index, width, height, sourceWidth, sourceHeight, bytes, fileName, savedUri, error,
+                mime, thumbnailPath, filePresent, "photo", "", "", 0);
+        }
+        PhotoItem(int index, int width, int height, int sourceWidth, int sourceHeight, long bytes, String fileName,
+                  String savedUri, String error, String mime, String thumbnailPath, boolean filePresent,
+                  String kind, String videoMime, String audioMime, long durationMs) {
             this.index = index; this.width = width; this.height = height;
             this.sourceWidth = sourceWidth; this.sourceHeight = sourceHeight; this.bytes = bytes;
             this.fileName = fileName; this.savedUri = savedUri; this.error = error; this.mime = mime;
             this.thumbnailPath = thumbnailPath;
             this.filePresent = filePresent;
+            this.kind = "video".equals(kind) ? "video" : "photo";
+            this.videoMime = videoMime; this.audioMime = audioMime; this.durationMs = durationMs;
         }
     }
 
