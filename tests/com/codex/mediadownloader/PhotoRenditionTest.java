@@ -19,6 +19,22 @@ public final class PhotoRenditionTest {
             "A larger signed template must be counted once");
         check(baseline.get(0).urls.size() == 4 && baseline.get(0).width == 2160,
             "Both large mirrors and their listed dimensions must remain available");
+        String imagePath = "/tos-useast5-i-photomode-tx/f7cf550d212e450e8db0190589ba292e";
+        String firstId = StreamResolver.photoSourceId(Arrays.asList(
+            "https://p19-sign.tiktokcdn-us.com" + imagePath + "~tplv-photomode-image.jpeg?x-signature=secret-a",
+            "https://p16-sign.tiktokcdn-us.com" + imagePath + "~tplv-photomode-image.jpeg?x-signature=secret-b"));
+        String refreshedId = StreamResolver.photoSourceId(Arrays.asList(
+            "https://p77-sign.tiktokcdn-us.com" + imagePath + "~tplv-photomode-image.jpeg?x-signature=secret-c"));
+        check(firstId.startsWith("tt:") && firstId.equals(refreshedId) &&
+            !firstId.contains("secret") && !firstId.contains("tos-useast"),
+            "A photo ID must ignore mirror hosts and signed query values");
+        check(!firstId.equals(StreamResolver.photoSourceId(Arrays.asList(
+            "https://p16-sign.tiktokcdn-us.com/tos-useast5-i-photomode-tx/another-photo-asset-1234567890~tplv-photomode-image.jpeg"))),
+            "Different photo assets must have different IDs");
+        check(StreamResolver.photoSourceId(Arrays.asList(
+            "https://p16-sign.tiktokcdn-us.com" + imagePath + "~tplv-photomode-image.jpeg",
+            "https://p16-sign.tiktokcdn-us.com/tos-useast5-i-photomode-tx/another-photo-asset-1234567890~tplv-photomode-image.jpeg")).isEmpty(),
+            "Conflicting asset paths must not create a durable ID");
         check(StreamResolver.mergePhotoCandidates(baseline, wide) == 0,
             "Repeated signatures must not create duplicate renditions");
         List<StreamResolver.PhotoCandidate> unrelated = Arrays.asList(
@@ -28,6 +44,15 @@ public final class PhotoRenditionTest {
             "A different image asset must not be substituted at the same album index");
         check(baseline.get(0).urls.size() == 4 && baseline.get(0).width == 2160,
             "An unrelated image must leave the chosen candidates unchanged");
+        List<StreamResolver.PhotoCandidate> identified = new ArrayList<>();
+        identified.add(new StreamResolver.PhotoCandidate(1, 1080, 1080,
+            Arrays.asList("https://p16-sign.tiktokcdn-us.com" + imagePath + "~tplv-small.jpeg"), firstId));
+        List<StreamResolver.PhotoCandidate> larger = Arrays.asList(new StreamResolver.PhotoCandidate(1,
+            2160, 2160, Arrays.asList("https://p77-sign.tiktokcdn-us.com" + imagePath +
+                "~tplv-large.jpeg"), refreshedId));
+        check(StreamResolver.mergePhotoCandidates(identified, larger) == 1 &&
+            firstId.equals(identified.get(0).sourceId),
+            "Rendition merging must retain the photo source ID");
         System.out.println("PhotoRenditionTest passed");
     }
 

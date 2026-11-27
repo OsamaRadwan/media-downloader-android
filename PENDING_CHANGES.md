@@ -5,7 +5,7 @@ This file contains only open implementation or verification work. Delete every l
 ## TikTok
 
 - [ ] Verify a live **photo Story** from button tap through saved full-size photo, correct Story identity, filename, metadata, and Open photo. Seven video Stories were verified; a live photo Story was not available in that test.
-- [ ] Identify a stable per-photo source ID for TikTok album retries and guard against a changed carousel item at the same position. The current TikTok parser exposes image URLs and dimensions but does not persist a child ID; its retry therefore checks only index/type. A public `/photo/` page probe from this computer ended with a connection reset, so no stable field was confirmed. Do not use a signed rendition URL as a durable ID without evidence that it stays stable across retries.
+- [ ] Verify TikTok's new optional photo-asset retry guard on multiple live albums. A public response sample showed distinct photo-mode asset paths shared by signed CDN mirrors; the app now hashes a recognized base path into new album rows and rejects a changed asset at that index. Synthetic tests cover mirror hosts, refreshed signatures, different assets, conflicting paths, and merge preservation. A direct current `/photo/` page probe from this computer ended with a connection reset, so stability across two fresh TikTok responses, actual partial retry, and phone file identity are unverified. Unknown path shapes and older records retain the index/type check.
 
 ## Instagram
 

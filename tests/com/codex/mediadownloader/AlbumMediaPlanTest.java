@@ -45,6 +45,13 @@ public final class AlbumMediaPlanTest {
             new ArrayList<>(), Collections.singletonList(first), new CookieManager(), "instagram");
         check(photos.isAlbum() && !photos.hasAlbumVideos() && photos.albumItems.size() == 1,
             "existing photo albums retain their item model");
+        StreamResolver.PhotoCandidate identified = new StreamResolver.PhotoCandidate(1, 1200, 1600,
+            Collections.singletonList("https://example.com/first.jpg"), "tt:known-asset");
+        StreamResolver.Result identifiedAlbum = new StreamResolver.Result("creator", "42", "123", "", "",
+            PostText.from("", "", Collections.emptyList()), 1,
+            new ArrayList<>(), Collections.singletonList(identified), new CookieManager(), "tiktok");
+        check("tt:known-asset".equals(identifiedAlbum.albumItems.get(0).sourceId),
+            "photo-only albums pass their stable source ID to the shared retry plan");
         boolean rejected = false;
         try {
             new StreamResolver.Result("creator", "42", "123", "", "",

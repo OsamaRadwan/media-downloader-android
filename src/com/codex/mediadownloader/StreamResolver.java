@@ -9,6 +9,7 @@ import java.net.URL;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -95,7 +96,7 @@ public final class StreamResolver {
         }
         private static List<AlbumItem> photoItems(List<PhotoCandidate> photos) {
             List<AlbumItem> items = new ArrayList<>();
-            for (PhotoCandidate photo : photos) items.add(AlbumItem.photo(photo));
+            for (PhotoCandidate photo : photos) items.add(AlbumItem.photo(photo, photo.sourceId));
             return items;
         }
     }
@@ -132,8 +133,13 @@ public final class StreamResolver {
     static final class PhotoCandidate {
         final int index, width, height;
         final List<String> urls;
+        final String sourceId;
         PhotoCandidate(int index, int width, int height, List<String> urls) {
-            this.index = index; this.width = width; this.height = height; this.urls = urls;
+            this(index, width, height, urls, "");
+        }
+        PhotoCandidate(int index, int width, int height, List<String> urls, String sourceId) {
+            this.index = index; this.width = width; this.height = height;
+            this.urls = urls; this.sourceId = sourceId == null ? "" : sourceId;
         }
     }
 
@@ -335,7 +341,7 @@ public final class StreamResolver {
                 if (isMediaUrl(url) && !urls.contains(url)) urls.add(url);
             }
             photos.add(new PhotoCandidate(i + 1, image == null ? 0 : image.optInt("imageWidth", 0),
-                image == null ? 0 : image.optInt("imageHeight", 0), urls));
+                image == null ? 0 : image.optInt("imageHeight", 0), urls, photoSourceId(urls)));
         }
         return photos;
     }
@@ -346,6 +352,8 @@ public final class StreamResolver {
             PhotoCandidate current = base.get(i);
             PhotoCandidate other = alternate.get(i);
             if (other.urls.isEmpty()) continue;
+            if (!current.sourceId.isEmpty() && !other.sourceId.isEmpty() &&
+                !current.sourceId.equals(other.sourceId)) continue;
             if (!current.urls.isEmpty() && !assetKey(current.urls.get(0)).equals(assetKey(other.urls.get(0))))
                 continue;
             Set<String> existing = new HashSet<>();
@@ -362,7 +370,8 @@ public final class StreamResolver {
             added += newRenditions.size();
             boolean larger = (long) other.width * other.height > (long) current.width * current.height;
             base.set(i, new PhotoCandidate(current.index, larger ? other.width : current.width,
-                larger ? other.height : current.height, urls));
+                larger ? other.height : current.height, urls,
+                current.sourceId.isEmpty() ? other.sourceId : current.sourceId));
         }
         return added;
     }
@@ -373,6 +382,30 @@ public final class StreamResolver {
             int template = path.indexOf('~');
             return template < 0 ? path : path.substring(0, template);
         } catch (Exception ignored) { return url; }
+    }
+
+    static String photoSourceId(List<String> urls) {
+        String asset = "";
+        for (String url : urls) {
+            if (!isMediaUrl(url)) continue;
+            String path = assetKey(url);
+            if (!path.contains("-i-photomode") ||
+                !path.matches("/[A-Za-z0-9/._-]{24,300}")) continue;
+            if (!asset.isEmpty() && !asset.equals(path)) return "";
+            asset = path;
+        }
+        if (asset.isEmpty()) return "";
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                .digest(asset.getBytes(StandardCharsets.UTF_8));
+            StringBuilder id = new StringBuilder("tt:");
+            char[] hex = "0123456789abcdef".toCharArray();
+            for (byte part : digest) {
+                id.append(hex[(part >>> 4) & 15]);
+                id.append(hex[part & 15]);
+            }
+            return id.toString();
+        } catch (Exception ignored) { return ""; }
     }
 
     private static String renditionKey(String url) {

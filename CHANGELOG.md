@@ -4,6 +4,8 @@ This log distinguishes code installed locally from GitHub releases. It summarize
 
 ## Local development bundle after v1.68 — not yet published
 
+- **TikTok album retry identity (offline only):** Recognizable photo-mode CDN asset paths now become hashed per-photo IDs in new album records. Signed query parameters, mirror hosts, and rendition templates are excluded. The shared retry guard rejects a changed asset at the same index; unknown paths and old records retain the prior check. Java tests and a signed build passed. The source example was a public historical response, and a fresh TikTok page could not be fetched from this computer, so live stability and phone retry remain unverified.
+
 - **RedNote album retry identity (offline only):** Public image file IDs are now carried into new RedNote album rows and checked by the existing shared item guard before retry transfer. A saved public three-photo page produced three distinct IDs, and a simulated same-type swap was rejected. The Java suite and signed build passed; no phone, fresh source response, or actual RedNote retry was exercised.
 
 - **Instagram album retry identity:** New Instagram album rows now save the source child media ID. Before retrying a partially saved album, the transfer rejects a child whose ID changed at a retained position, including a swap between two photos or two videos. Older rows without IDs keep the existing index/type compatibility path. The Java suite, signed build, two real public-embed parser probes, and a legacy/new JSON round-trip probe passed. No phone or app transfer was used for this slice. The build now gives D8 one compiled-classes JAR to avoid Windows command-length failure as the codebase grows.
