@@ -4,7 +4,9 @@ This log distinguishes code installed locally from GitHub releases. It summarize
 
 ## Local development bundle after v1.68 — not yet published
 
-- **RedNote album source audit (offline):** A saved three-photo public page retains three distinct file IDs, but fresh direct URLs for that exact note all redirect to an unsupported numeric route without post data. The production resolver rejected the redirects; cross-response ID stability and on-phone retry remain pending. No app code or release changed in this audit.
+- **RedNote public album identity check (offline):** A reachable public nine-photo short link resolved twice without an account session. The production resolver returned the same post ID and nine distinct photo file IDs in the same order. This supports the per-photo retry identity guard for that source, but no changed-order source, partial retry, or phone save was tested. `test.ps1` and `build.ps1` passed; no app code or release changed.
+
+- **RedNote album source audit (offline):** A saved three-photo public page retains three distinct file IDs, but fresh direct URLs for that exact note all redirect to an unsupported numeric route without post data. The production resolver rejected the redirects; that note's cross-response ID stability and on-phone retry remain pending. No app code or release changed in this audit.
 
 - **Instagram Story source diagnostics (offline only):** Anonymous profile pages for five tested public accounts now exposed one owner ID each, but their reels-media responses were HTTP 200 with no Story items. The production resolver reached that empty response for an older Story link. It now logs reel count, whether the requested account matched, and item count, and reports an empty public list without claiming a sign-in is necessarily required. The Java suite and signed build passed. No currently active Story, phone capture, or saved Story was verified.
 
