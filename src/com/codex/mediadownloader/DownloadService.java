@@ -357,13 +357,17 @@ public class DownloadService extends Service {
     private Duplicate findDuplicate(String link, String resolvedKey, int excludedId) {
         String urlKey = DownloadIdentity.fromUrl(link);
         if (urlKey.isEmpty() && (resolvedKey == null || resolvedKey.isEmpty())) return null;
+        Set<Integer> activeJobs;
+        synchronized (serviceLock) {
+            activeJobs = new HashSet<>(activeJobIds);
+        }
         Duplicate complete = null;
         Duplicate retryable = null;
         for (DownloadStore.Entry existing : DownloadStore.list(this)) {
             if (existing.id == excludedId || !DownloadIdentity.matches(urlKey,
                 resolvedKey == null ? "" : resolvedKey, existing.sourceUrl, existing.shareUrl,
                 existing.videoId)) continue;
-            if (activeJobIds.contains(existing.id)) return new Duplicate(existing, true, false);
+            if (activeJobs.contains(existing.id)) return new Duplicate(existing, true, false);
             boolean present = SavedMedia.complete(this, existing);
             if (present && complete == null) complete = new Duplicate(existing, false, true);
             else if (!present && retryable == null && canRetry(existing))
