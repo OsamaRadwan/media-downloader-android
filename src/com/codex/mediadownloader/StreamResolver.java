@@ -33,6 +33,10 @@ public final class StreamResolver {
     private static final Pattern PHOTO_ID = Pattern.compile("/photo/(\\d{15,22})");
     private static final Pattern UNIVERSAL = Pattern.compile("<script[^>]*id=\"__UNIVERSAL_DATA_FOR_REHYDRATION__\"[^>]*>(.*?)</script>", Pattern.DOTALL);
 
+    private static final class MissingPublicDetailException extends Exception {
+        MissingPublicDetailException(String message) { super(message); }
+    }
+
     private StreamResolver() { }
 
     private static final class BrowserProfile {
@@ -168,7 +172,7 @@ public final class StreamResolver {
     static Identity identity(String shareUrl, Trace trace) throws Exception {
         CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
         JSONObject item = itemFromPage(fetchTextWithRetry(shareUrl, null, DESKTOP, cookies, trace),
-            "webapp.reflow.video.detail");
+            "webapp.reflow.video.detail", trace);
         String postId = item.optString("id", "");
         JSONObject author = item.optJSONObject("author");
         String accountId = author == null ? "" : author.optString("id", "");
@@ -183,32 +187,48 @@ public final class StreamResolver {
         CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
         String videoId = idFromUrl(shareUrl);
         boolean photoLink = false;
+        String resolvedShareUrl = shareUrl;
         if (videoId == null) {
             StringBuilder redirected = new StringBuilder();
             String sharedHtml = fetchTextWithRetry(shareUrl, redirected, DESKTOP, cookies, trace);
+            if (redirected.length() > 0) resolvedShareUrl = redirected.toString();
             Matcher photo = PHOTO_ID.matcher(redirected.toString());
             if (photo.find()) {
                 videoId = photo.group(1);
                 photoLink = true;
             } else {
-                JSONObject shared = itemFromPage(sharedHtml, "webapp.reflow.video.detail");
+                JSONObject shared = itemFromPage(sharedHtml, "webapp.reflow.video.detail", trace);
                 videoId = shared.optString("id", "");
                 if (videoId.isEmpty()) throw new Exception("Could not identify the shared post");
             }
         }
         String pageUrl = "https://www.tiktok.com/@_/" + (photoLink ? "photo" : "video") + "/" + videoId;
+        Log.i("MediaDownloader", "Resolving TikTok " + (photoLink ? "photo" : "video") + " post " + videoId);
         // TikTok sometimes omits its visitor cookie from a direct video-page response.
         // Establish the same anonymous web session before requesting signed media URLs.
         try { openSession(cookies, trace); } catch (Exception ignored) { /* The video page may still work. */ }
-        String directUrl = directPostUrl(shareUrl, videoId, photoLink);
+        String directUrl = directPostUrl(resolvedShareUrl, videoId, photoLink);
         JSONObject item;
         try {
-            item = itemFromPage(fetchText(directUrl, null, DESKTOP, cookies, trace), "webapp.video-detail");
+            item = itemFromPage(fetchText(directUrl, null, DESKTOP, cookies, trace),
+                "webapp.video-detail", trace);
         } catch (Exception first) {
-            if (!isTransportFailure(first)) throw first;
-            trace(trace, "resolver.retry", "firstHost=" + new URL(directUrl).getHost() +
-                " reason=" + DiagnosticsFormat.describe(first));
-            item = itemFromPage(fetchText(pageUrl, null, DESKTOP, cookies, trace), "webapp.video-detail");
+            if (!isTransportFailure(first) && !(first instanceof MissingPublicDetailException)) throw first;
+            if (directUrl.equals(pageUrl)) {
+                if (!(first instanceof MissingPublicDetailException)) throw first;
+                item = itemFromPage(fetchText(directUrl, null, MOBILE, cookies, trace),
+                    "webapp.video-detail", trace);
+            } else {
+                trace(trace, "resolver.retry", "firstHost=" + new URL(directUrl).getHost() +
+                    " reason=" + DiagnosticsFormat.describe(first));
+                try {
+                    item = itemFromPage(fetchText(pageUrl, null, DESKTOP, cookies, trace),
+                        "webapp.video-detail", trace);
+                } catch (MissingPublicDetailException missing) {
+                    item = itemFromPage(fetchText(directUrl, null, MOBILE, cookies, trace),
+                        "webapp.video-detail", trace);
+                }
+            }
         }
         if (!videoId.equals(item.optString("id", ""))) throw new Exception("TikTok returned a different video");
         JSONObject author = item.optJSONObject("author");
@@ -236,7 +256,8 @@ public final class StreamResolver {
             int addedVariants = 0;
             for (BrowserProfile profile : new BrowserProfile[]{WIDE_DESKTOP, MOBILE}) {
                 try {
-                    JSONObject alternative = itemFromPage(fetchText(pageUrl, null, profile, cookies, trace), "webapp.video-detail");
+                    JSONObject alternative = itemFromPage(fetchText(pageUrl, null, profile, cookies, trace),
+                        "webapp.video-detail", trace);
                     if (!videoId.equals(alternative.optString("id", ""))) continue;
                     JSONObject alternatePost = alternative.optJSONObject("imagePost");
                     JSONArray alternateImages = alternatePost == null ? null : alternatePost.optJSONArray("images");
@@ -486,20 +507,34 @@ public final class StreamResolver {
         return match.find() ? match.group(1) : null;
     }
 
-    private static JSONObject itemFromPage(String html, String scopeKey) throws Exception {
+    private static JSONObject itemFromPage(String html, String scopeKey, Trace trace) throws Exception {
         Matcher script = UNIVERSAL.matcher(html);
-        if (!script.find()) throw new Exception("TikTok did not expose public video data");
+        if (!script.find()) throw new MissingPublicDetailException("TikTok did not expose public video data");
         JSONObject scope = new JSONObject(script.group(1)).optJSONObject("__DEFAULT_SCOPE__");
         JSONObject detail = scope == null ? null : scope.optJSONObject(scopeKey);
         if (detail == null && scope != null) {
             detail = scope.optJSONObject(scopeKey.equals("webapp.video-detail") ? "webapp.reflow.video.detail" : "webapp.video-detail");
         }
-        if (detail == null) throw new Exception("TikTok post details were unavailable");
+        if (detail == null) {
+            JSONArray names = scope == null ? null : scope.names();
+            StringBuilder shape = new StringBuilder();
+            int count = names == null ? 0 : names.length();
+            for (int i = 0; i < Math.min(count, 40); i++) {
+                String name = names.optString(i, "").replaceAll("[^A-Za-z0-9._-]", "_");
+                if (shape.length() > 0) shape.append(',');
+                shape.append(name.length() > 50 ? name.substring(0, 50) : name);
+            }
+            Log.w("MediaDownloader", "TikTok public detail scope missing: requested=" + scopeKey +
+                " scopeCount=" + count + " scopes=" + shape);
+            trace(trace, "resolver.page_shape", "requested=" + scopeKey +
+                " scopeCount=" + count + " scopes=" + shape);
+            throw new MissingPublicDetailException("TikTok post details were unavailable");
+        }
         int status = detail.optInt("statusCode", 0);
         if (status != 0) throw new Exception("TikTok returned video status " + status);
         JSONObject info = detail.optJSONObject("itemInfo");
         JSONObject item = info == null ? null : info.optJSONObject("itemStruct");
-        if (item == null) throw new Exception("Could not read the video details");
+        if (item == null) throw new MissingPublicDetailException("Could not read the video details");
         return item;
     }
 
