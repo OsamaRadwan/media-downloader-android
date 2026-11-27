@@ -38,6 +38,18 @@ public final class ArchitectureBoundaryTest {
             "Left button uses the opposite pillarbox");
         check(OverlayGeometry.vertical(1080, 0, 1080, 133, 50) == 474,
             "Vertical placement scales with landscape height");
+        check(OverlayGeometry.portraitY(2400, 0, 0, 133, 50, 45, true) == 1134,
+            "Single-video portrait position retains the configured height");
+        check(OverlayGeometry.portraitY(2400, 588, 0, 133, 50, 45, true) == 205,
+            "Playlist sheet places the button inside the visible video");
+        check(OverlayGeometry.portraitY(2400, 588 - 96, 0, 133, 47, 45, true) == 144,
+            "Playlist sheet position accounts for the status bar inset");
+        check(OverlayGeometry.portraitY(2400, 0, 1218, 133, 50, 45, true) == 1040,
+            "Right-side button stays above the profile rail");
+        check(OverlayGeometry.portraitY(2400, 0, 1218 - 96, 133, 50, 45, true) == 944,
+            "Physical control bounds are converted below the status bar");
+        check(OverlayGeometry.portraitY(2400, 0, 1218, 133, 50, 45, false) == 1134,
+            "Left-side setting does not move for right-side controls");
         check(item(4, "complete", "7708810139658128647", "").tiktokUrl().equals(
             "https://www.tiktok.com/@creator/video/7708810139658128647"), "Creator and video ID open the matching post");
         check(item(5, "failed", "", "https://vt.tiktok.com/example").tiktokUrl().equals(

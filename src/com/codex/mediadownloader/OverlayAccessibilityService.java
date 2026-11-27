@@ -13,6 +13,7 @@ import android.graphics.Path;
 import android.graphics.Bitmap;
 import android.hardware.HardwareBuffer;
 import android.os.Handler;
+import android.os.Build;
 import android.os.Looper;
 import android.util.Log;
 import java.util.regex.Matcher;
@@ -22,6 +23,7 @@ import android.view.Display;
 import android.view.View;
 import android.view.MotionEvent;
 import android.view.WindowManager;
+import android.view.WindowInsets;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
@@ -49,8 +51,9 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private boolean collecting;
     private String sourceApp = TIKTOK;
     private OverlayPlacement placement = OverlayPlacement.TIKTOK;
-    private Rect landscapeVideoBounds;
+    private Rect tiktokVideoBounds;
     private Rect tiktokScreenBounds;
+    private Rect tiktokRightControlBounds;
     private boolean landscapeCapture;
     private boolean visibilityCheckQueued;
     private boolean visibilityCheckImmediate;
@@ -171,8 +174,11 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                 boolean landscape = isLandscape(root);
                 Rect screen = new Rect();
                 root.getBoundsInScreen(screen);
+                Rect video = landscape ? findTikTokVideoBounds(root) :
+                    findTikTokPortraitVideoBounds(windows, screen);
+                Rect rightControl = landscape ? null : findTikTokRightControlBounds(windows, screen);
                 showOverlay(TIKTOK, landscape ? OverlayPlacement.TIKTOK_LANDSCAPE : OverlayPlacement.TIKTOK,
-                    landscape ? findTikTokVideoBounds(root) : null, screen);
+                    video, screen, rightControl);
             } else if (INSTAGRAM.equals(topApp)) {
                 OverlayPlacement instagramPlacement = find(root, "Reels") != null && find(root, "Home") == null ?
                     OverlayPlacement.INSTAGRAM_REEL : OverlayPlacement.INSTAGRAM_FEED;
@@ -197,10 +203,11 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     }
 
     private void showOverlay(String app, OverlayPlacement newPlacement) {
-        showOverlay(app, newPlacement, null, null);
+        showOverlay(app, newPlacement, null, null, null);
     }
 
-    private void showOverlay(String app, OverlayPlacement newPlacement, Rect videoBounds, Rect screenBounds) {
+    private void showOverlay(String app, OverlayPlacement newPlacement, Rect videoBounds,
+                             Rect screenBounds, Rect rightControlBounds) {
         // A display rotation can leave the old overlay surface visible to WindowManager
         // but empty on screen. Give portrait and landscape their own fresh view surface.
         if (overlay != null && TIKTOK.equals(app) && TIKTOK.equals(sourceApp) &&
@@ -210,20 +217,23 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         }
         if (overlay != null) {
             if (!app.equals(sourceApp) || newPlacement != placement ||
-                !java.util.Objects.equals(landscapeVideoBounds, videoBounds) ||
-                !java.util.Objects.equals(tiktokScreenBounds, screenBounds)) {
+                !java.util.Objects.equals(tiktokVideoBounds, videoBounds) ||
+                !java.util.Objects.equals(tiktokScreenBounds, screenBounds) ||
+                !java.util.Objects.equals(tiktokRightControlBounds, rightControlBounds)) {
                 sourceApp = app;
                 placement = newPlacement;
-                landscapeVideoBounds = videoBounds == null ? null : new Rect(videoBounds);
+                tiktokVideoBounds = videoBounds == null ? null : new Rect(videoBounds);
                 tiktokScreenBounds = screenBounds == null ? null : new Rect(screenBounds);
+                tiktokRightControlBounds = rightControlBounds == null ? null : new Rect(rightControlBounds);
                 refreshOverlay();
             }
             return;
         }
         sourceApp = app;
         placement = newPlacement;
-        landscapeVideoBounds = videoBounds == null ? null : new Rect(videoBounds);
+        tiktokVideoBounds = videoBounds == null ? null : new Rect(videoBounds);
         tiktokScreenBounds = screenBounds == null ? null : new Rect(screenBounds);
+        tiktokRightControlBounds = rightControlBounds == null ? null : new Rect(rightControlBounds);
         // Use the application context so the window gets its own overlay token,
         // rather than inheriting this accessibility service's overlay token.
         windowManager = (WindowManager) getApplicationContext().getSystemService(WINDOW_SERVICE);
@@ -276,11 +286,19 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private void placeOverlay(WindowManager.LayoutParams params) {
         if (placement == OverlayPlacement.TIKTOK_LANDSCAPE && tiktokScreenBounds != null &&
             !tiktokScreenBounds.isEmpty())
-            OverlaySettings.placeLandscapeVideo(params, this, settings, landscapeVideoBounds,
+            OverlaySettings.placeLandscapeVideo(params, this, settings, tiktokVideoBounds,
                 tiktokScreenBounds.width(), tiktokScreenBounds.height());
         else if (placement == OverlayPlacement.TIKTOK && tiktokScreenBounds != null &&
-            !tiktokScreenBounds.isEmpty())
-            OverlaySettings.place(params, this, settings, placement, tiktokScreenBounds.height());
+            !tiktokScreenBounds.isEmpty()) {
+            int topInset = Build.VERSION.SDK_INT >= 30 ?
+                windowManager.getCurrentWindowMetrics().getWindowInsets()
+                    .getInsets(WindowInsets.Type.statusBars()).top : 0;
+            OverlaySettings.placeTikTokPortrait(params, this, settings, tiktokScreenBounds.height(),
+                tiktokVideoBounds == null ? 0 :
+                    tiktokVideoBounds.bottom - tiktokScreenBounds.top - topInset,
+                tiktokRightControlBounds == null ? 0 :
+                    tiktokRightControlBounds.top - tiktokScreenBounds.top - topInset);
+        }
         else OverlaySettings.place(params, this, settings, placement);
     }
 
@@ -289,8 +307,9 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         windowManager.removeView(overlay);
         overlay = null;
         overlayParams = null;
-        landscapeVideoBounds = null;
+        tiktokVideoBounds = null;
         tiktokScreenBounds = null;
+        tiktokRightControlBounds = null;
     }
 
     private Rect findTikTokVideoBounds(AccessibilityNodeInfo root) {
@@ -317,6 +336,58 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             }
         }
         return best == null ? playerBounds : best;
+    }
+
+    private Rect findTikTokPortraitVideoBounds(List<AccessibilityWindowInfo> windows, Rect screen) {
+        Rect sheet = findTikTokBounds(windows, screen, true);
+        return sheet == null ? null : new Rect(screen.left, screen.top, screen.right, sheet.top);
+    }
+
+    private Rect findTikTokRightControlBounds(List<AccessibilityWindowInfo> windows, Rect screen) {
+        return findTikTokBounds(windows, screen, false);
+    }
+
+    private Rect findTikTokBounds(List<AccessibilityWindowInfo> windows, Rect screen, boolean sheet) {
+        Rect best = null;
+        for (AccessibilityWindowInfo window : windows) {
+            if (window.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) continue;
+            AccessibilityNodeInfo root = window.getRoot();
+            if (root == null || !TIKTOK.equals(String.valueOf(root.getPackageName()))) continue;
+            Rect candidate = findTikTokBounds(root, screen, sheet);
+            if (candidate != null && (best == null || candidate.top < best.top)) best = candidate;
+        }
+        return best;
+    }
+
+    private Rect findTikTokBounds(AccessibilityNodeInfo node, Rect screen, boolean sheet) {
+        if (node == null) return null;
+        CharSequence description = node.getContentDescription();
+        String id = node.getViewIdResourceName();
+        boolean target = sheet ? description != null && "Bottom sheet".contentEquals(description) :
+            id != null && id.endsWith(":id/user_avatar") ||
+                description != null && description.toString().startsWith("Like video.");
+        // A visible overlay can occlude the avatar in Accessibility's visibility test.
+        // Its bounded screen position still marks a control that our button must avoid.
+        if (target && (!sheet || node.isVisibleToUser())) {
+            Rect bounds = new Rect();
+            node.getBoundsInScreen(bounds);
+            boolean eligible = sheet ?
+                bounds.width() >= screen.width() * 3 / 4 &&
+                    bounds.left >= screen.left && bounds.right <= screen.right &&
+                    bounds.bottom <= screen.bottom &&
+                    bounds.top > screen.top + screen.height() / 8 &&
+                    bounds.top < screen.bottom - screen.height() / 8 :
+                bounds.left >= screen.left + screen.width() * 3 / 4 &&
+                    bounds.top > screen.top + screen.height() / 4 &&
+                    bounds.top < screen.bottom - screen.height() / 8;
+            if (eligible) return bounds;
+        }
+        Rect best = null;
+        for (int i = 0; i < node.getChildCount(); i++) {
+            Rect candidate = findTikTokBounds(node.getChild(i), screen, sheet);
+            if (candidate != null && (best == null || candidate.top < best.top)) best = candidate;
+        }
+        return best;
     }
 
     private AccessibilityNodeInfo findNodeById(AccessibilityNodeInfo root, String suffix) {

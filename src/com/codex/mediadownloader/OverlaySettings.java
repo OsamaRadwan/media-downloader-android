@@ -107,4 +107,13 @@ final class OverlaySettings {
         params.y = OverlayGeometry.vertical(screenHeight, videoBounds.top, videoBounds.bottom,
             params.height, prefs.get(OverlayOption.TIKTOK_LANDSCAPE_HEIGHT));
     }
+
+    static void placeTikTokPortrait(WindowManager.LayoutParams params, Context context,
+                                   OverlayPreferences prefs, int screenHeight,
+                                   int visibleBottom, int firstRightControlTop) {
+        place(params, context, prefs, OverlayPlacement.TIKTOK, screenHeight);
+        params.y = OverlayGeometry.portraitY(screenHeight, visibleBottom, firstRightControlTop,
+            params.height, prefs.get(OverlayOption.HEIGHT), dp(context, 18),
+            prefs.get(OverlayOption.SIDE) == 1);
+    }
 }

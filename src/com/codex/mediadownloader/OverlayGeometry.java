@@ -4,6 +4,15 @@ package com.codex.mediadownloader;
 final class OverlayGeometry {
     private OverlayGeometry() { }
 
+    static int portraitY(int screenHeight, int visibleBottom, int firstRightControlTop,
+                         int buttonHeight, int percent, int gap, boolean right) {
+        int bottom = visibleBottom > 0 ? Math.min(screenHeight, visibleBottom - gap) : screenHeight;
+        int y = clamp(bottom * percent / 100 - buttonHeight / 2, 0, bottom - buttonHeight);
+        if (right && firstRightControlTop > 0 && y + buttonHeight + gap > firstRightControlTop)
+            y = Math.max(0, firstRightControlTop - buttonHeight - gap);
+        return y;
+    }
+
     static int horizontal(int screenWidth, int videoLeft, int videoRight,
                           int buttonWidth, int gap, boolean right) {
         int start;
