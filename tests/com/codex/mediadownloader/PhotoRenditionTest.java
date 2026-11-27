@@ -6,6 +6,23 @@ import java.util.List;
 
 public final class PhotoRenditionTest {
     public static void main(String[] args) {
+        String postId = "7667319413741276449";
+        check(StreamResolver.directPostUrl(
+            "https://www.tiktok.com/@creator/photo/" + postId + "?share_token=private",
+            postId, true).equals("https://www.tiktok.com/@creator/photo/" + postId),
+            "A direct photo link must stay on the photo route without share tokens");
+        check(StreamResolver.directPostUrl(
+            "https://vt.tiktok.com/shortcode/", postId, true).equals(
+                "https://www.tiktok.com/@_/photo/" + postId),
+            "A shortened photo link must use the photo route after its redirect is identified");
+        check(StreamResolver.directPostUrl(
+            "https://www.tiktok.com/@creator/video/" + postId, postId, false).equals(
+                "https://www.tiktok.com/@creator/video/" + postId),
+            "Video links must preserve their existing route");
+        check(StreamResolver.directPostUrl(
+            "https://www.tiktok.com/@creator/photo/7000000000000000000", postId, true).equals(
+                "https://www.tiktok.com/@_/photo/" + postId),
+            "A different post ID must not be used for follow-up page requests");
         String asset = "https://p16-sign.tiktokcdn.com/tos-useast5/photo123";
         List<StreamResolver.PhotoCandidate> baseline = new ArrayList<>();
         baseline.add(new StreamResolver.PhotoCandidate(1, 1080, 2140, Arrays.asList(

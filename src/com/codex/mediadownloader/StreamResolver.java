@@ -196,11 +196,11 @@ public final class StreamResolver {
                 if (videoId.isEmpty()) throw new Exception("Could not identify the shared post");
             }
         }
-        String pageUrl = "https://www.tiktok.com/@_/video/" + videoId;
+        String pageUrl = "https://www.tiktok.com/@_/" + (photoLink ? "photo" : "video") + "/" + videoId;
         // TikTok sometimes omits its visitor cookie from a direct video-page response.
         // Establish the same anonymous web session before requesting signed media URLs.
         try { openSession(cookies, trace); } catch (Exception ignored) { /* The video page may still work. */ }
-        String directUrl = directPostUrl(shareUrl, videoId);
+        String directUrl = directPostUrl(shareUrl, videoId, photoLink);
         JSONObject item;
         try {
             item = itemFromPage(fetchText(directUrl, null, DESKTOP, cookies, trace), "webapp.video-detail");
@@ -446,14 +446,16 @@ public final class StreamResolver {
         } finally { deadline.close(); connection.disconnect(); }
     }
 
-    private static String directPostUrl(String shareUrl, String videoId) {
+    static String directPostUrl(String shareUrl, String videoId, boolean photoLink) {
+        String fallback = "https://www.tiktok.com/@_/" + (photoLink ? "photo" : "video") + "/" + videoId;
         try {
             URL parsed = new URL(shareUrl);
-            if (!parsed.getHost().endsWith(".tiktok.com")) return "https://www.tiktok.com/@_/video/" + videoId;
+            if (!parsed.getHost().endsWith(".tiktok.com")) return fallback;
             String path = parsed.getPath();
-            return VIDEO_ID.matcher(path).find() ? "https://www.tiktok.com" + path :
-                "https://www.tiktok.com/@_/video/" + videoId;
-        } catch (Exception ignored) { return "https://www.tiktok.com/@_/video/" + videoId; }
+            Matcher match = (photoLink ? PHOTO_ID : VIDEO_ID).matcher(path);
+            return match.find() && videoId.equals(match.group(1)) ?
+                "https://www.tiktok.com" + path : fallback;
+        } catch (Exception ignored) { return fallback; }
     }
 
     private static boolean isTransportFailure(Exception error) {
