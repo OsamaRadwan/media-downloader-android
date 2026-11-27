@@ -234,6 +234,10 @@ public class DownloadService extends Service {
             if (result.isAlbum()) {
                 final String albumTitle = title;
                 entry.mediaType = "album";
+                if (result.hasAlbumVideos()) {
+                    entry.fileName = result.albumItems.size() + " items • post " + result.videoId;
+                    throw new Exception("Mixed photo and video albums are not supported yet; no new item was saved");
+                }
                 entry.state = "selecting";
                 entry.stage = result.photos.size() == 1 ? "Preparing photo" :
                     "Preparing " + result.photos.size() + " photos";

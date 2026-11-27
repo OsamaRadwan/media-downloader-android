@@ -37,6 +37,8 @@ final class AlbumTransfer {
     static Summary download(Context context, StreamResolver.Result result, DownloadStore.Entry entry,
                             Progress progress) throws Exception {
         if (!result.isAlbum()) throw new IllegalArgumentException("Post is not an album");
+        if (result.hasAlbumVideos())
+            throw new Exception("Mixed photo and video albums are not supported yet; no new item was saved");
         if (!entry.photos.isEmpty() && entry.photos.size() != result.photos.size())
             throw new Exception("Album changed since the earlier download; retry as a new job");
         if (entry.photos.isEmpty()) for (StreamResolver.PhotoCandidate candidate : result.photos)

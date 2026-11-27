@@ -53,6 +53,7 @@ public final class StreamResolver {
         final long publishTimeSeconds;
         final List<Candidate> candidates;
         final List<PhotoCandidate> photos;
+        final List<AlbumItem> albumItems;
         final String platform;
         Result(String profileName, String accountId, String videoId, String coverUrl, String pageUrl,
                PostText postText, long publishTimeSeconds, List<Candidate> candidates,
@@ -63,6 +64,13 @@ public final class StreamResolver {
         Result(String profileName, String accountId, String videoId, String coverUrl, String pageUrl,
                PostText postText, long publishTimeSeconds, List<Candidate> candidates,
                List<PhotoCandidate> photos, CookieManager cookies, String platform) {
+            this(profileName, accountId, videoId, coverUrl, pageUrl, postText,
+                publishTimeSeconds, candidates, photos, cookies, platform, photoItems(photos));
+        }
+        Result(String profileName, String accountId, String videoId, String coverUrl, String pageUrl,
+               PostText postText, long publishTimeSeconds, List<Candidate> candidates,
+               List<PhotoCandidate> photos, CookieManager cookies, String platform,
+               List<AlbumItem> albumItems) {
             this.profileName = profileName;
             this.accountId = accountId;
             this.videoId = videoId;
@@ -73,10 +81,43 @@ public final class StreamResolver {
             this.publishTimeSeconds = publishTimeSeconds;
             this.candidates = candidates;
             this.photos = photos;
+            for (int i = 0; i < albumItems.size(); i++)
+                if (albumItems.get(i) == null || albumItems.get(i).index != i + 1)
+                    throw new IllegalArgumentException("Album items must keep source order");
+            this.albumItems = new ArrayList<>(albumItems);
             this.platform = platform;
         }
 
-        boolean isAlbum() { return !photos.isEmpty(); }
+        boolean isAlbum() { return !albumItems.isEmpty(); }
+        boolean hasAlbumVideos() {
+            for (AlbumItem item : albumItems) if (item.video != null) return true;
+            return false;
+        }
+        private static List<AlbumItem> photoItems(List<PhotoCandidate> photos) {
+            List<AlbumItem> items = new ArrayList<>();
+            for (PhotoCandidate photo : photos) items.add(AlbumItem.photo(photo));
+            return items;
+        }
+    }
+
+    static final class AlbumItem {
+        final int index;
+        final PhotoCandidate photo;
+        final List<Candidate> video;
+        private AlbumItem(int index, PhotoCandidate photo, List<Candidate> video) {
+            this.index = index;
+            this.photo = photo;
+            this.video = video;
+        }
+        static AlbumItem photo(PhotoCandidate candidate) {
+            if (candidate == null || candidate.index < 1) throw new IllegalArgumentException("Invalid album photo");
+            return new AlbumItem(candidate.index, candidate, null);
+        }
+        static AlbumItem video(int index, List<Candidate> candidates) {
+            if (index < 1 || candidates == null || candidates.isEmpty())
+                throw new IllegalArgumentException("Invalid album video");
+            return new AlbumItem(index, null, new ArrayList<>(candidates));
+        }
     }
 
     static final class PhotoCandidate {

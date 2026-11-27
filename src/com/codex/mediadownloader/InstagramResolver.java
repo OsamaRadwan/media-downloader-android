@@ -344,6 +344,7 @@ final class InstagramResolver {
         if (!https(cover)) cover = "";
         List<StreamResolver.PhotoCandidate> photos = new ArrayList<>();
         List<StreamResolver.Candidate> videos = new ArrayList<>();
+        List<StreamResolver.AlbumItem> albumItems = new ArrayList<>();
         JSONObject sidecar = media.optJSONObject("edge_sidecar_to_children");
         JSONArray edges = sidecar == null ? null : sidecar.optJSONArray("edges");
         if (edges != null) {
@@ -354,8 +355,12 @@ final class InstagramResolver {
                 JSONObject child = edge == null ? null : edge.optJSONObject("node");
                 if (child == null) throw new Exception("Instagram album item is missing");
                 if (child.optBoolean("is_video"))
-                    throw new Exception("Instagram mixed video and photo albums are not supported yet");
-                photos.add(photo(child, i + 1));
+                    albumItems.add(StreamResolver.AlbumItem.video(i + 1, videoCandidates(child, i + 1)));
+                else {
+                    StreamResolver.PhotoCandidate image = photo(child, i + 1);
+                    photos.add(image);
+                    albumItems.add(StreamResolver.AlbumItem.photo(image));
+                }
             }
         } else if (media.optBoolean("is_video")) {
             String url = media.optString("video_url", "");
@@ -366,8 +371,35 @@ final class InstagramResolver {
             photos.add(photo(media, 1));
         }
         if (cover.isEmpty() && !photos.isEmpty()) cover = photos.get(0).urls.get(0);
-        return new StreamResolver.Result(profile, account, mediaId, cover, canonical,
-            postText, published / 1000, videos, photos, anonymous, "instagram");
+        return edges == null ? new StreamResolver.Result(profile, account, mediaId, cover, canonical,
+            postText, published / 1000, videos, photos, anonymous, "instagram") :
+            new StreamResolver.Result(profile, account, mediaId, cover, canonical,
+                postText, published / 1000, videos, photos, anonymous, "instagram", albumItems);
+    }
+
+    private static List<StreamResolver.Candidate> videoCandidates(JSONObject item, int index) throws Exception {
+        List<StreamResolver.Candidate> variants = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        JSONArray resources = item.optJSONArray("video_resources");
+        if (resources != null) for (int i = 0; i < resources.length(); i++) {
+            JSONObject resource = resources.optJSONObject(i);
+            if (resource == null) continue;
+            String url = resource.optString("src", "");
+            if (https(url) && seen.add(url))
+                variants.add(new StreamResolver.Candidate(url,
+                    resource.optInt("config_width", 0), resource.optInt("config_height", 0),
+                    0, "instagram-album-" + index + "-variant-" + i));
+        }
+        String primary = item.optString("video_url", "");
+        JSONObject dimensions = item.optJSONObject("dimensions");
+        if (https(primary) && seen.add(primary))
+            variants.add(new StreamResolver.Candidate(primary,
+                dimensions == null ? 0 : dimensions.optInt("width", 0),
+                dimensions == null ? 0 : dimensions.optInt("height", 0), 0,
+                "instagram-album-" + index + "-primary"));
+        if (variants.isEmpty()) throw new Exception("Instagram did not provide a public video stream for item " + index);
+        variants.sort((a, b) -> Long.compare((long) b.width * b.height, (long) a.width * a.height));
+        return variants;
     }
 
     private static String singlePhotoProfile(String html, String code) throws Exception {

@@ -54,6 +54,7 @@ $sources = @(
     'tests\com\codex\mediadownloader\SharedPostLinkTest.java',
     'src\com\codex\mediadownloader\StoryProgressBar.java',
     'tests\com\codex\mediadownloader\StoryProgressBarTest.java'
+    'tests\com\codex\mediadownloader\AlbumMediaPlanTest.java'
 ) | ForEach-Object { Join-Path $project $_ }
 $androidJar = 'D:\Random\AndroidSdk\platforms\android-35\android.jar'
 & javac -encoding UTF-8 --release 8 -cp $androidJar -d $target @sources
@@ -94,5 +95,7 @@ if ($LASTEXITCODE -ne 0) { throw 'TikTok Story batch tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Instagram Story batch tests failed' }
 & java -cp $target com.codex.mediadownloader.StoryProgressBarTest
 if ($LASTEXITCODE -ne 0) { throw 'Story progress bar tests failed' }
+& java -cp $target com.codex.mediadownloader.AlbumMediaPlanTest
+if ($LASTEXITCODE -ne 0) { throw 'Album media plan tests failed' }
 & java -cp $target com.codex.mediadownloader.SharedPostLinkTest
 if ($LASTEXITCODE -ne 0) { throw 'Shared post link tests failed' }

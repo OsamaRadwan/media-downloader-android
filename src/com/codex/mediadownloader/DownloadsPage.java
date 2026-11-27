@@ -457,7 +457,8 @@ final class DownloadsPage {
                 (entry.videoId.isEmpty() ? story ? "Story download" : "Download" :
                     (story ? "Story " : album ? "Album " : "Video ") + entry.videoId) :
                 "@" + entry.profileName + (story ? album ? " • photo Story" : " • video Story" :
-                    album ? entry.photos.size() == 1 ? " • photo" : " • photo album" : ""));
+                    album ? entry.photos.isEmpty() ? " • album" :
+                        entry.photos.size() == 1 ? " • photo" : " • photo album" : ""));
             file.setText(entry.fileName.isEmpty() ? story ? "Reading Story details…" : "Reading post details…" : entry.fileName);
             int availablePhotos = 0;
             for (DownloadItem.PhotoItem photo : entry.photos) if (photo.filePresent) availablePhotos++;
@@ -483,7 +484,8 @@ final class DownloadsPage {
                 progress.setVisibility(View.GONE);
             }
             String amount;
-            if (album) amount = (entry.photos.size() == 1 && availablePhotos == 1 ? "1 photo on phone" :
+            if (album && entry.photos.isEmpty()) amount = "No album items saved";
+            else if (album) amount = (entry.photos.size() == 1 && availablePhotos == 1 ? "1 photo on phone" :
                 availablePhotos + " of " + entry.photos.size() + " photos on phone") +
                 " • " + bytes(entry.downloadedBytes);
             else {
