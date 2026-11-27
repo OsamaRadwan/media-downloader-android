@@ -638,7 +638,8 @@ final class DownloadsPage {
                     boolean matches = PhotoQuality.matchesListed(photo.width, photo.height,
                         photo.sourceWidth, photo.sourceHeight);
                     text(photoRow, matches ? "Matches " + appName + "'s listed resolution" :
-                        "Below " + appName + "'s listed " + photo.sourceWidth + " × " + photo.sourceHeight,
+                        "Below or different crop from " + appName + "'s listed " +
+                            photo.sourceWidth + " × " + photo.sourceHeight,
                         12, matches ? ACCENT : ERROR, false, 2);
                 }
                 if (photo.filePresent && "video".equals(photo.kind))

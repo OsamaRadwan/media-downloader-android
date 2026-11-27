@@ -12,8 +12,9 @@ final class PhotoQuality {
     }
 
     static boolean matchesListed(int width, int height, int listedWidth, int listedHeight) {
-        return listedWidth > 0 && listedHeight > 0 &&
-            width >= listedWidth && height >= listedHeight;
+        return listedWidth > 0 && listedHeight > 0 && width > 0 && height > 0 &&
+            matchesAspect(width, height, listedWidth, listedHeight) &&
+            (long) width * height >= (long) listedWidth * listedHeight;
     }
 
     static boolean matchesAspect(int width, int height, int listedWidth, int listedHeight) {

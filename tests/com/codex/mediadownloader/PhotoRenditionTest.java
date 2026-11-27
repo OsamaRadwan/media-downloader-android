@@ -46,6 +46,12 @@ public final class PhotoRenditionTest {
             PhotoQuality.matchesAspect(1350, 1080, 1080, 1350) &&
             PhotoQuality.matchesAspect(1500, 1500, 0, 0),
             "Equivalent shapes, stored rotation, and missing listed dimensions remain eligible");
+        check(PhotoQuality.matchesListed(1350, 1080, 1080, 1350) &&
+            PhotoQuality.matchesListed(1001, 1249, 1000, 1250) &&
+            !PhotoQuality.matchesListed(1080, 1349, 1080, 1350) &&
+            !PhotoQuality.matchesListed(1500, 1500, 1080, 1350) &&
+            !PhotoQuality.matchesListed(1500, 1500, 0, 0),
+            "Downloads resolution label must use eligible aspect and total pixels");
         String imagePath = "/tos-useast5-i-photomode-tx/f7cf550d212e450e8db0190589ba292e";
         String firstId = StreamResolver.photoSourceId(Arrays.asList(
             "https://p19-sign.tiktokcdn-us.com" + imagePath + "~tplv-photomode-image.jpeg?x-signature=secret-a",
