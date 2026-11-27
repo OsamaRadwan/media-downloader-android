@@ -38,6 +38,8 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private static final String INSTAGRAM = "com.instagram.android";
     private static final String REDNOTE = "com.xingin.xhs";
     private static final String SYSTEM_UI = "com.android.systemui";
+    private static final Pattern INSTAGRAM_STORY_HEADER = Pattern.compile(
+        "^([A-Za-z0-9._]{1,40})'s story(?:,|$)", Pattern.CASE_INSENSITIVE);
     private final Handler handler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
     private WindowManager.LayoutParams overlayParams;
@@ -53,6 +55,10 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private boolean visibilityCheckQueued;
     private boolean visibilityCheckImmediate;
     private TikTokStoryBatch storyBatch;
+    private InstagramStoryBatch instagramStoryBatch;
+    private int instagramDirectionCaptures;
+    private boolean instagramScanningBackward;
+    private int instagramShareRetries;
     private int storyScanPass;
     private int storyDirectionCaptures;
     private boolean storyScanningBackward;
@@ -89,6 +95,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                 visibilityCheckImmediate = false;
                 if (collecting) {
                     storyBatch = null;
+                    instagramStoryBatch = null;
                     releaseOverlayFocus();
                     collecting = false;
                     landscapeCapture = false;
@@ -109,6 +116,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     @Override public void onInterrupt() { }
     @Override public void onDestroy() {
         storyBatch = null;
+        instagramStoryBatch = null;
         handler.removeCallbacks(visibilityCheck);
         visibilityCheckQueued = false;
         visibilityCheckImmediate = false;
@@ -352,12 +360,14 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         AccessibilityNodeInfo share = null;
         AccessibilityNodeInfo story = null;
         boolean tiktokStory = false;
+        String instagramStoryAccount = null;
         if (TIKTOK.equals(app)) {
             story = findNodeById(root, ":id/vp_story_immersive_feed");
             tiktokStory = story != null && story.isVisibleToUser();
             share = findTikTokShare(root);
         } else if (INSTAGRAM.equals(app)) {
-            share = findShare(root);
+            instagramStoryAccount = instagramStoryAccount(findInstagramStoryHeader(root));
+            share = instagramStoryAccount == null ? findShare(root) : findInstagramStoryShare(root);
         } else if (REDNOTE.equals(app)) {
             share = findRedNoteShare(root);
         }
@@ -378,6 +388,12 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             collecting = true;
             Toast.makeText(this, "Collecting this account's Stories", Toast.LENGTH_SHORT).show();
             readTikTokStorySegments(account);
+            return;
+        }
+        if (instagramStoryAccount != null) {
+            collecting = true;
+            Toast.makeText(this, "Collecting this account's Stories", Toast.LENGTH_SHORT).show();
+            readInstagramStorySegments(instagramStoryAccount);
             return;
         }
         if (!action.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
@@ -482,6 +498,13 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             handler.postDelayed(() -> clickCopyWhenReady(app, deadline), 200);
             return;
         }
+        if (INSTAGRAM.equals(app) && instagramStoryBatch != null && instagramShareRetries < 2) {
+            instagramShareRetries++;
+            Log.w("MediaDownloader", "Instagram Story share retry=" + instagramShareRetries);
+            if (isInstagramShareSheetOpen()) dismissInstagramShareSheet();
+            handler.postDelayed(() -> openNextInstagramStoryShare(System.currentTimeMillis() + 2500), 500);
+            return;
+        }
         DiagnosticsStore.record(this, "overlay.copy_link", "Copy link action unavailable");
         failCollecting(new Exception("Could not find Copy link"));
     }
@@ -566,6 +589,21 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                 else handler.postDelayed(this::navigateTikTokStory, 150);
                 return;
             }
+            if (instagramStoryBatch != null) {
+                InstagramStoryBatch batch = instagramStoryBatch;
+                batch.captured(shareUrl);
+                instagramDirectionCaptures++;
+                instagramShareRetries = 0;
+                Log.i("MediaDownloader", "Instagram Story captured=" + batch.collectedCount() +
+                    "/" + batch.segmentCount() + " backward=" + instagramScanningBackward);
+                DiagnosticsStore.trace(this, "overlay.instagram_story", "captured=" +
+                    batch.collectedCount() + "/" + batch.segmentCount());
+                releaseOverlayFocus();
+                boolean sheetOpen = isInstagramShareSheetOpen();
+                Log.d("MediaDownloader", "Instagram Story share sheet open after copy=" + sheetOpen);
+                closeInstagramStoryShareThenContinue(0);
+                return;
+            }
             Intent intent = new Intent(this, DownloadService.class);
             intent.putExtra("shareUrl", shareUrl);
             startForegroundService(intent);
@@ -597,6 +635,16 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                 ". No downloads started: " + error.getMessage(), Toast.LENGTH_LONG).show();
             return;
         }
+        if (instagramStoryBatch != null) {
+            int captured = instagramStoryBatch.collectedCount();
+            instagramStoryBatch = null;
+            releaseOverlayFocus();
+            if (isInstagramShareSheetOpen()) dismissInstagramShareSheet();
+            finishCollecting();
+            Toast.makeText(this, "Story collection stopped after " + captured +
+                ". No downloads started: " + error.getMessage(), Toast.LENGTH_LONG).show();
+            return;
+        }
         Toast.makeText(this, "Could not start download: " + error.getMessage(), Toast.LENGTH_LONG).show();
         boolean closeShareSheet = (landscapeCapture && findActionInWindows("Copy link") != null) ||
             (INSTAGRAM.equals(sourceApp) && isInstagramShareSheetOpen());
@@ -621,6 +669,223 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             windowManager.updateViewLayout(overlay, overlayParams);
             overlay.setFocusableInTouchMode(false);
         }
+    }
+
+    private String instagramStoryAccount(AccessibilityNodeInfo header) {
+        if (header == null || header.getContentDescription() == null) return null;
+        Matcher match = INSTAGRAM_STORY_HEADER.matcher(header.getContentDescription());
+        return match.find() ? match.group(1) : null;
+    }
+
+    private AccessibilityNodeInfo findInstagramStoryHeader(AccessibilityNodeInfo node) {
+        if (node == null || !node.isVisibleToUser()) return null;
+        Rect bounds = new Rect();
+        node.getBoundsInScreen(bounds);
+        if (bounds.top < getResources().getDisplayMetrics().heightPixels / 4 &&
+            instagramStoryAccount(node) != null) return node;
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo found = findInstagramStoryHeader(node.getChild(i));
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private AccessibilityNodeInfo findInstagramStoryShare(AccessibilityNodeInfo root) {
+        if (root == null) return null;
+        Rect screen = new Rect();
+        root.getBoundsInScreen(screen);
+        return findInstagramStoryShare(root, screen);
+    }
+
+    private AccessibilityNodeInfo findInstagramStoryShare(AccessibilityNodeInfo node, Rect screen) {
+        if (node == null || !node.isVisibleToUser()) return null;
+        if (node.getContentDescription() != null &&
+            "Share".contentEquals(node.getContentDescription())) {
+            Rect bounds = new Rect();
+            node.getBoundsInScreen(bounds);
+            if (bounds.centerX() >= screen.left + screen.width() * 4 / 5 &&
+                bounds.centerY() >= screen.top + screen.height() * 4 / 5) return node;
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo found = findInstagramStoryShare(node.getChild(i), screen);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private void readInstagramStorySegments(String account) {
+        readInstagramStorySegments(account, 0);
+    }
+
+    private void readInstagramStorySegments(String account, int attempt) {
+        takeScreenshot(Display.DEFAULT_DISPLAY, getMainExecutor(), new TakeScreenshotCallback() {
+            @Override public void onSuccess(ScreenshotResult result) {
+                HardwareBuffer buffer = result.getHardwareBuffer();
+                Bitmap pixels = null;
+                try {
+                    if (!collecting || instagramStoryBatch != null) return;
+                    Bitmap hardware = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
+                    if (hardware == null) throw new Exception("Story screenshot is unavailable");
+                    pixels = hardware.copy(Bitmap.Config.ARGB_8888, false);
+                    hardware.recycle();
+                    if (pixels == null) throw new Exception("Story pixels are unavailable");
+                    AccessibilityNodeInfo root = getRootInActiveWindow();
+                    if (!INSTAGRAM.equals(String.valueOf(root == null ? null : root.getPackageName())) ||
+                        !account.equalsIgnoreCase(instagramStoryAccount(findInstagramStoryHeader(root))))
+                        throw new Exception("Instagram Story account changed before capture");
+                    int width = pixels.getWidth(), height = pixels.getHeight();
+                    int[] above = new int[width], row = new int[width], below = new int[width];
+                    List<Integer> best = new ArrayList<>();
+                    // The Story frame boundary itself can resemble progress segments.
+                    // The actual strip sits just below it, at about 8% of screen height.
+                    int firstY = Math.max(6, height / 13);
+                    int lastY = Math.min(height - 7, height / 10);
+                    int bestY = -1;
+                    for (int y = firstY; y <= lastY; y++) {
+                        pixels.getPixels(above, 0, width, 0, y - 6, width, 1);
+                        pixels.getPixels(row, 0, width, 0, y, width, 1);
+                        pixels.getPixels(below, 0, width, 0, y + 6, width, 1);
+                        List<Integer> centers = StoryProgressBar.centers(above, row, below);
+                        if (centers.size() > best.size() &&
+                            StoryProgressBar.evenlySpaced(centers, width)) {
+                            best = centers;
+                            bestY = y;
+                        }
+                    }
+                    if (best.isEmpty() && attempt < 3) {
+                        Log.d("MediaDownloader", "Instagram Story progress strip retry=" + (attempt + 1));
+                        handler.postDelayed(() -> readInstagramStorySegments(account, attempt + 1), 250);
+                        return;
+                    }
+                    instagramStoryBatch = new InstagramStoryBatch(account, best.size());
+                    instagramDirectionCaptures = 0;
+                    instagramScanningBackward = false;
+                    instagramShareRetries = 0;
+                    Log.i("MediaDownloader", "Instagram Story segments=" + best.size() + " stripY=" + bestY);
+                    DiagnosticsStore.trace(OverlayAccessibilityService.this,
+                        "overlay.instagram_story", "segments=" + best.size());
+                    openNextInstagramStoryShare(System.currentTimeMillis() + 2500);
+                } catch (Exception error) { failCollecting(error); }
+                finally {
+                    if (pixels != null) pixels.recycle();
+                    if (buffer != null) buffer.close();
+                }
+            }
+            @Override public void onFailure(int errorCode) {
+                failCollecting(new Exception("Story screenshot failed (" + errorCode + ")"));
+            }
+        });
+    }
+
+    private void openNextInstagramStoryShare(long deadline) {
+        InstagramStoryBatch batch = instagramStoryBatch;
+        if (batch == null) return;
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        String account = instagramStoryAccount(findInstagramStoryHeader(root));
+        if (root == null || !INSTAGRAM.equals(String.valueOf(root.getPackageName())) || account == null) {
+            if (System.currentTimeMillis() < deadline) {
+                handler.postDelayed(() -> openNextInstagramStoryShare(deadline), 120);
+                return;
+            }
+            failCollecting(new Exception("Instagram Story player is unavailable"));
+            return;
+        }
+        if (!batch.isSameAccount(account)) {
+            Log.i("MediaDownloader", "Instagram Story account changed during scan");
+            finishInstagramStoryDirection();
+            return;
+        }
+        AccessibilityNodeInfo action = clickableAncestor(findInstagramStoryShare(root));
+        if (action != null && action.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            Log.i("MediaDownloader", "Instagram Story share opened backward=" + instagramScanningBackward);
+            handler.postDelayed(() -> clickCopyWhenReady(INSTAGRAM, System.currentTimeMillis() + 4000), 700);
+            return;
+        }
+        if (System.currentTimeMillis() < deadline) {
+            handler.postDelayed(() -> openNextInstagramStoryShare(deadline), 120);
+            return;
+        }
+        failCollecting(new Exception("Could not share the current Instagram Story"));
+    }
+
+    private void navigateInstagramStory() {
+        if (instagramStoryBatch == null) return;
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null || !INSTAGRAM.equals(String.valueOf(root.getPackageName()))) {
+            failCollecting(new Exception("Instagram Story player closed during collection"));
+            return;
+        }
+        Rect screen = new Rect();
+        root.getBoundsInScreen(screen);
+        instagramShareRetries = 0;
+        Path path = new Path();
+        path.moveTo(screen.left + screen.width() * (instagramScanningBackward ? 3 : 97) / 100,
+            screen.top + screen.height() / 3);
+        android.accessibilityservice.GestureDescription gesture =
+            new android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 60))
+                .build();
+        if (!dispatchGesture(gesture, new GestureResultCallback() {
+            @Override public void onCompleted(android.accessibilityservice.GestureDescription ignored) {
+                Log.i("MediaDownloader", "Instagram Story navigation completed backward=" +
+                    instagramScanningBackward);
+                handler.postDelayed(() -> openNextInstagramStoryShare(System.currentTimeMillis() + 2500), 650);
+            }
+            @Override public void onCancelled(android.accessibilityservice.GestureDescription ignored) {
+                failCollecting(new Exception("Could not navigate the Instagram Story player"));
+            }
+        }, handler)) failCollecting(new Exception("Could not navigate the Instagram Story player"));
+    }
+
+    private void closeInstagramStoryShareThenContinue(int dismissAttempts) {
+        InstagramStoryBatch batch = instagramStoryBatch;
+        if (batch == null) return;
+        if (isInstagramShareSheetOpen()) {
+            if (dismissAttempts >= 4) {
+                failCollecting(new Exception("Instagram Story share sheet stayed open"));
+                return;
+            }
+            dismissInstagramShareSheet();
+            handler.postDelayed(() -> closeInstagramStoryShareThenContinue(dismissAttempts + 1), 350);
+            return;
+        }
+        if (batch.isComplete()) handler.postDelayed(this::finishInstagramStoryBatch, 250);
+        else if (instagramDirectionCaptures >= batch.segmentCount())
+            handler.postDelayed(this::finishInstagramStoryDirection, 250);
+        else handler.postDelayed(this::navigateInstagramStory, 250);
+    }
+
+    private void finishInstagramStoryDirection() {
+        InstagramStoryBatch batch = instagramStoryBatch;
+        if (batch == null) return;
+        if (batch.isComplete() || instagramScanningBackward) {
+            finishInstagramStoryBatch();
+            return;
+        }
+        instagramScanningBackward = true;
+        instagramDirectionCaptures = 0;
+        DiagnosticsStore.trace(this, "overlay.instagram_story", "scanning_backwards=true");
+        navigateInstagramStory();
+    }
+
+    private void finishInstagramStoryBatch() {
+        InstagramStoryBatch batch = instagramStoryBatch;
+        if (batch == null) return;
+        if (!batch.isComplete()) {
+            failCollecting(new Exception("Found " + batch.collectedCount() + " of " +
+                batch.segmentCount() + " distinct Stories"));
+            return;
+        }
+        List<String> links = batch.links();
+        instagramStoryBatch = null;
+        finishCollecting();
+        for (String link : links) {
+            Intent intent = new Intent(this, DownloadService.class);
+            intent.putExtra("shareUrl", link);
+            startForegroundService(intent);
+        }
+        DiagnosticsStore.trace(this, "overlay.instagram_story", "queued=" + links.size());
+        Toast.makeText(this, "Queued " + links.size() + " Stories for download", Toast.LENGTH_LONG).show();
     }
 
     private void readTikTokStorySegments(String account) {

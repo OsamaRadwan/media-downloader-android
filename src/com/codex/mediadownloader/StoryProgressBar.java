@@ -3,7 +3,7 @@ package com.codex.mediadownloader;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Finds the centers of TikTok Story segments in one screenshot row. */
+/** Finds rendered Story-segment centers in a screenshot row. */
 final class StoryProgressBar {
     static List<Integer> centers(int[] above, int[] row, int[] below) {
         ArrayList<Integer> centers = new ArrayList<>();
@@ -44,6 +44,18 @@ final class StoryProgressBar {
         if (centers.isEmpty() || centers.size() > 100 || firstRun > row.length / 12 ||
             lastRun < row.length * 11 / 12) centers.clear();
         return centers;
+    }
+
+    /** A Story strip divides almost the full screen into equal-width segments. */
+    static boolean evenlySpaced(List<Integer> centers, int width) {
+        if (centers == null || centers.isEmpty() || centers.size() > 100 || width < 100)
+            return false;
+        double pitch = (double) width / centers.size();
+        for (int i = 0; i < centers.size(); i++) {
+            double expected = pitch * (i + 0.5);
+            if (Math.abs(centers.get(i) - expected) > pitch * 0.24) return false;
+        }
+        return true;
     }
 
     private static boolean isBar(int above, int pixel, int below) {

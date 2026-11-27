@@ -1,6 +1,7 @@
 package com.codex.mediadownloader;
 
 import java.util.List;
+import java.util.Arrays;
 
 public final class StoryProgressBarTest {
     public static void main(String[] args) {
@@ -20,6 +21,12 @@ public final class StoryProgressBarTest {
         check(centers.size() == 7, "seven segments");
         check(centers.get(0) == 98, "first segment center");
         check(centers.get(6) == 980, "last segment center");
+        check(StoryProgressBar.evenlySpaced(centers, row.length), "uniform Story strip");
+        check(StoryProgressBar.evenlySpaced(Arrays.asList(278, 800), row.length),
+            "two-segment device Story strip");
+        check(!StoryProgressBar.evenlySpaced(
+            Arrays.asList(31, 102, 159, 221, 296, 322, 350, 377, 542, 672, 742, 1044),
+            row.length), "video texture is not a Story strip");
         System.out.println("StoryProgressBarTest passed");
     }
 
