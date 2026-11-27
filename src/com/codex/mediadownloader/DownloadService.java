@@ -393,10 +393,14 @@ public class DownloadService extends Service {
                                 int jobId, String title, String fileName, DownloadStore.Entry entry,
                                 long savedBytes, int albumIndex) throws Exception {
         String videoId = result.videoId;
-        File video = new File(getCacheDir(), "video-" + videoId + "-" + jobId + "-" + albumIndex + ".mp4");
+        File firstFile = new File(getCacheDir(), "video-" + videoId + "-" + jobId + "-" + albumIndex + "-a.mp4");
+        File secondFile = new File(getCacheDir(), "video-" + videoId + "-" + jobId + "-" + albumIndex + "-b.mp4");
+        File video = null;
         Uri pending = null;
         try {
             MediaMux.Tracks tracks = null;
+            StreamResolver.Candidate selectedCandidate = null;
+            int selectedOption = 0;
             Set<String> tried = new HashSet<>();
             int option = 0;
             int accessDenied = 0;
@@ -406,6 +410,8 @@ public class DownloadService extends Service {
                 // Distinct URLs can share a variant label yet contain different audio tracks.
                 if (!tried.add(candidate.url)) continue;
                 option++;
+                File attempt = video == firstFile ? secondFile : firstFile;
+                attempt.delete();
                 try {
                     entry.streamOption = option;
                     if (albumIndex == 0) {
@@ -424,7 +430,7 @@ public class DownloadService extends Service {
                     try {
                         int publicProfile = "rednote".equals(result.platform) &&
                             "origin".equals(candidate.variant) ? 2 : 0;
-                        fetch(candidate.url, result.pageUrl, result.cookies, publicProfile, false, video,
+                        fetch(candidate.url, result.pageUrl, result.cookies, publicProfile, false, attempt,
                             "Downloading stream • option " + option, jobId, title, fileName,
                             candidate.width, candidate.height, entry, savedBytes, albumIndex);
                         Log.i("MediaDownloader", "Stream option " + option + " downloaded without visitor cookies");
@@ -432,12 +438,12 @@ public class DownloadService extends Service {
                         accessError = publicError;
                         DiagnosticsStore.record(this, "stream.public job=" + jobId + " item=" + albumIndex +
                             " option=" + option, publicError);
-                        video.delete();
+                        attempt.delete();
                         if (!"tiktok".equals(result.platform) ||
                             !MediaRequestCookies.retryWithVisitorCookies(publicError)) throw publicError;
                         for (int profile = 0; profile < (Build.VERSION.SDK_INT >= 34 ? 6 : 5); profile++) {
                             try {
-                                fetch(candidate.url, result.pageUrl, result.cookies, profile, true, video,
+                                fetch(candidate.url, result.pageUrl, result.cookies, profile, true, attempt,
                                     "Downloading stream • option " + option, jobId, title, fileName,
                                     candidate.width, candidate.height, entry, savedBytes, albumIndex);
                                 accessError = null;
@@ -448,7 +454,7 @@ public class DownloadService extends Service {
                                     " option=" + option + " profile=" + profile, error);
                                 Log.w("MediaDownloader", "Stream option " + option + " visitor profile " + profile +
                                     " failed: " + error.getMessage());
-                                video.delete();
+                                attempt.delete();
                                 if (!MediaRequestCookies.retryWithVisitorCookies(error)) break;
                             }
                         }
@@ -459,19 +465,28 @@ public class DownloadService extends Service {
                     entry.speedBytesPerSecond = 0;
                     DownloadStore.save(this, entry, false);
                     notifications.notify(jobId, detailNotice(jobId, title, fileName, "Checking video and audio", candidate.width,
-                        candidate.height, video.length(), video.length(), null));
-                    tracks = MediaMux.inspectMuxed(video);
-                    Log.i("MediaDownloader", "Selected muxed stream option=" + option +
+                        candidate.height, attempt.length(), attempt.length(), null));
+                    MediaMux.Tracks inspected = MediaMux.inspectMuxed(attempt);
+                    Log.i("MediaDownloader", "Verified muxed stream option=" + option +
                         " listed=" + candidate.width + "x" + candidate.height +
-                        " actual=" + tracks.width + "x" + tracks.height +
-                        " video=" + tracks.videoMime + " audio=" + tracks.audioMime);
-                    DiagnosticsStore.trace(this, "video.selected", "job=" + jobId + " item=" + albumIndex +
+                        " actual=" + inspected.width + "x" + inspected.height +
+                        " video=" + inspected.videoMime + " audio=" + inspected.audioMime);
+                    DiagnosticsStore.trace(this, "video.candidate", "job=" + jobId + " item=" + albumIndex +
                         " option=" + option +
                         " host=" + new URL(candidate.url).getHost() +
                         " listed=" + candidate.width + "x" + candidate.height +
-                        " actual=" + tracks.width + "x" + tracks.height +
-                        " video=" + tracks.videoMime + " audio=" + tracks.audioMime);
-                    break;
+                        " actual=" + inspected.width + "x" + inspected.height +
+                        " video=" + inspected.videoMime + " audio=" + inspected.audioMime);
+                    if (tracks == null || VideoQuality.better(result.platform, candidate.variant,
+                        inspected.width, inspected.height, attempt.length(), selectedCandidate.variant,
+                        tracks.width, tracks.height, video.length())) {
+                        if (video != null) video.delete();
+                        video = attempt;
+                        tracks = inspected;
+                        selectedCandidate = candidate;
+                        selectedOption = option;
+                    } else attempt.delete();
+                    if ("rednote".equals(result.platform) && "origin".equals(candidate.variant)) break;
                 } catch (Exception candidateError) {
                     DiagnosticsStore.record(this, "stream.candidate job=" + jobId + " item=" + albumIndex +
                         " option=" + option, candidateError);
@@ -480,7 +495,7 @@ public class DownloadService extends Service {
                     if (lastError != null && lastError.contains("audio")) noAudio++;
                     Log.w("MediaDownloader", "Skipping stream option " + option + " " +
                         candidate.width + "x" + candidate.height + ": " + candidateError.getMessage());
-                    video.delete();
+                    attempt.delete();
                     entry.state = "retrying";
                     entry.stage = "Trying another stream";
                     entry.downloadedBytes = savedBytes;
@@ -499,6 +514,19 @@ public class DownloadService extends Service {
                 throw new Exception("No usable stream with video and audio: " +
                     (lastError == null ? "unknown response" : lastError));
             }
+            entry.streamOption = selectedOption;
+            entry.downloadedBytes = savedBytes + video.length();
+            entry.totalBytes = albumIndex == 0 ? video.length() : -1;
+            if (albumIndex == 0) {
+                entry.width = tracks.width;
+                entry.height = tracks.height;
+            }
+            DiagnosticsStore.trace(this, "video.selected", "job=" + jobId + " item=" + albumIndex +
+                " option=" + selectedOption + " host=" + new URL(selectedCandidate.url).getHost() +
+                " listed=" + selectedCandidate.width + "x" +
+                selectedCandidate.height + " actual=" + tracks.width + "x" + tracks.height +
+                " bytes=" + video.length() + " video=" + tracks.videoMime +
+                " audio=" + tracks.audioMime);
             entry.state = "tagging";
             entry.stage = "Adding source link";
             DownloadStore.save(this, entry, false);
@@ -555,7 +583,8 @@ public class DownloadService extends Service {
             if (pending != null) getContentResolver().delete(pending, null, null);
             throw error;
         } finally {
-            video.delete();
+            firstFile.delete();
+            secondFile.delete();
         }
     }
 
