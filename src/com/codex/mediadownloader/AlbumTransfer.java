@@ -159,7 +159,7 @@ final class AlbumTransfer {
     private static PhotoFile fetch(Context context, StreamResolver.Result result, DownloadStore.Entry entry,
                                    StreamResolver.PhotoCandidate candidate, String url, File destination,
                                    Progress progress, boolean visitorCookies) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection connection = NetworkRouteStore.open(new URL(url));
         try {
             connection.setConnectTimeout(15000);
             connection.setReadTimeout(30000);

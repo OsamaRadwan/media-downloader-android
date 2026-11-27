@@ -2,6 +2,8 @@ package com.codex.mediadownloader;
 
 import android.app.Activity;
 import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -10,10 +12,15 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.text.Editable;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -23,26 +30,45 @@ import android.widget.Toast;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 final class DownloadsPage {
-    private static final int PAGE = 0xff102330;
-    private static final int CARD = 0xff1b3443;
-    private static final int TEXT = 0xfff3f7f9;
-    private static final int MUTED = 0xffb8cbd2;
-    private static final int ACCENT = 0xff54dbc5;
-    private static final int ERROR = 0xffff9e95;
+    static final int RESTORED_FILE_REQUEST = 88;
+    private static final ExecutorService historyWorker = Executors.newSingleThreadExecutor();
+    private static final int PAGE = AppPalette.PAGE;
+    private static final int CARD = AppPalette.CARD;
+    private static final int TEXT = AppPalette.TEXT;
+    private static final int MUTED = AppPalette.MUTED;
+    private static final int ACCENT = AppPalette.ACCENT;
+    private static final int ERROR = AppPalette.ERROR;
     private final Activity activity;
     private final DownloadsController controller;
     private final ScrollView scroll;
     private final LinearLayout list;
     private final TextView summary;
     private final TextView empty;
+    private final TextView resultCount;
+    private final LinearLayout topPaging;
+    private final LinearLayout bottomPaging;
+    private final Button topPreviousPage;
+    private final Button topNextPage;
+    private final Button previousPage;
+    private final Button nextPage;
+    private final EditText search;
     private final Map<Integer, Row> rows = new HashMap<>();
+    private int pageIndex;
     private int focusId;
     private boolean focused;
+    private boolean loading;
+    private boolean refreshPending;
+    private int pendingFileJobId;
+    private int pendingPhotoIndex;
 
     DownloadsPage(Activity activity, DownloadsController controller, int focusId) {
         this.activity = activity;
@@ -57,11 +83,79 @@ final class DownloadsPage {
         scroll.addView(page);
         text(page, "Downloads", 27, TEXT, true, 0);
         text(page, "Downloads continue in the background. Tap a notification to return to its details.", 14, MUTED, false, 7);
-        summary = text(page, "", 14, ACCENT, true, 18);
+        summary = text(page, "Loading downloads…", 14, ACCENT, true, 18);
+        LinearLayout searchRow = new LinearLayout(activity);
+        searchRow.setOrientation(LinearLayout.HORIZONTAL);
+        searchRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(-1, -2);
+        searchParams.topMargin = dp(16);
+        page.addView(searchRow, searchParams);
+        search = new EditText(activity);
+        search.setSingleLine(true);
+        search.setHint("Search downloads and metadata");
+        search.setTextColor(TEXT);
+        search.setHintTextColor(MUTED);
+        search.setTextSize(15);
+        search.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        FrameLayout searchBox = new FrameLayout(activity);
+        searchRow.addView(searchBox, new LinearLayout.LayoutParams(0, dp(48), 1));
+        search.setPadding(dp(10), 0, dp(100), 0);
+        searchBox.addView(search, new FrameLayout.LayoutParams(-1, -1));
+        ImageButton paste = new ImageButton(activity);
+        paste.setImageResource(activity.getResources().getIdentifier("ic_paste", "drawable",
+            activity.getPackageName()));
+        paste.setColorFilter(ACCENT);
+        paste.setBackgroundColor(Color.TRANSPARENT);
+        paste.setPadding(dp(12), dp(12), dp(12), dp(12));
+        paste.setContentDescription("Paste clipboard into search");
+        FrameLayout.LayoutParams pasteParams = new FrameLayout.LayoutParams(dp(48), dp(48),
+            Gravity.END | Gravity.CENTER_VERTICAL);
+        pasteParams.rightMargin = dp(48);
+        searchBox.addView(paste, pasteParams);
+        paste.setOnClickListener(v -> pasteSearch());
+        ImageButton clear = new ImageButton(activity);
+        clear.setImageResource(activity.getResources().getIdentifier("ic_close", "drawable",
+            activity.getPackageName()));
+        clear.setColorFilter(MUTED);
+        clear.setBackgroundColor(Color.TRANSPARENT);
+        clear.setPadding(dp(12), dp(12), dp(12), dp(12));
+        clear.setContentDescription("Clear search");
+        FrameLayout.LayoutParams clearParams = new FrameLayout.LayoutParams(dp(48), dp(48),
+            Gravity.END | Gravity.CENTER_VERTICAL);
+        searchBox.addView(clear, clearParams);
+        clear.setEnabled(false);
+        clear.setAlpha(0.45f);
+        clear.setOnClickListener(v -> search.setText(""));
+        search.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
+                clear.setEnabled(value.length() > 0);
+                clear.setAlpha(value.length() == 0 ? 0.45f : 1f);
+                pageIndex = 0;
+                DownloadsPage.this.focusId = 0;
+                focused = false;
+                scroll.scrollTo(0, 0);
+                refresh();
+            }
+            @Override public void afterTextChanged(Editable value) { }
+        });
+        resultCount = text(page, "", 13, MUTED, false, 8);
+        topPaging = pagingRow(page);
+        topPreviousPage = pageButton(topPaging, "Newer");
+        topNextPage = pageButton(topPaging, "Older");
+        topPreviousPage.setOnClickListener(v -> changePage(pageIndex - 1));
+        topNextPage.setOnClickListener(v -> changePage(pageIndex + 1));
+        topPaging.setVisibility(View.GONE);
         empty = text(page, "No downloads yet. Open a TikTok or Instagram post and tap the floating arrow.", 15, MUTED, false, 24);
         list = new LinearLayout(activity);
         list.setOrientation(LinearLayout.VERTICAL);
         page.addView(list);
+        bottomPaging = pagingRow(page);
+        previousPage = pageButton(bottomPaging, "Newer");
+        nextPage = pageButton(bottomPaging, "Older");
+        previousPage.setOnClickListener(v -> changePage(pageIndex - 1));
+        nextPage.setOnClickListener(v -> changePage(pageIndex + 1));
+        bottomPaging.setVisibility(View.GONE);
     }
 
     View view() { return scroll; }
@@ -73,17 +167,72 @@ final class DownloadsPage {
     }
 
     void refresh() {
-        DownloadsState state = controller.load();
+        if (loading) { refreshPending = true; return; }
+        loading = true;
+        String query = search.getText().toString();
+        int requestedPage = pageIndex;
+        int requestedFocus = focusId;
+        historyWorker.execute(() -> {
+            DownloadsState state;
+            try { state = controller.load(query, requestedPage, requestedFocus); }
+            catch (Exception error) {
+                DiagnosticsStore.record(activity, "downloads.history", error);
+                activity.runOnUiThread(() -> {
+                    loading = false;
+                    summary.setText("Could not load downloads");
+                });
+                return;
+            }
+            activity.runOnUiThread(() -> {
+                loading = false;
+                if (!query.equals(search.getText().toString()) || requestedPage != pageIndex ||
+                    requestedFocus != focusId) {
+                    refreshPending = false;
+                    refresh();
+                    return;
+                }
+                showState(state);
+                if (refreshPending) {
+                    refreshPending = false;
+                    refresh();
+                }
+            });
+        });
+    }
+
+    private void showState(DownloadsState state) {
         List<DownloadItem> entries = state.items;
+        pageIndex = state.pageIndex;
         summary.setText(state.activeCount + " active  •  " + state.completeCount +
-            " complete  •  " + state.failedCount + " failed");
-        empty.setVisibility(entries.isEmpty() ? View.VISIBLE : View.GONE);
+            " complete  •  " + state.failedCount + " failed" +
+            (state.missingCount == 0 ? "" : "  •  " + state.missingCount + " missing"));
+        resultCount.setText(state.matchedCount == 0 ? "0 results" :
+            "Showing " + (pageIndex * DownloadsController.PAGE_SIZE + 1) + "–" +
+            (pageIndex * DownloadsController.PAGE_SIZE + entries.size()) + " of " + state.matchedCount);
+        empty.setText(state.totalCount == 0 ? "No downloads yet. Open a supported post and tap the floating arrow." :
+            "No downloads match this search.");
+        empty.setVisibility(state.matchedCount == 0 ? View.VISIBLE : View.GONE);
+        boolean hasPages = state.matchedCount > DownloadsController.PAGE_SIZE;
+        topPaging.setVisibility(hasPages ? View.VISIBLE : View.GONE);
+        bottomPaging.setVisibility(hasPages ? View.VISIBLE : View.GONE);
+        int newer = pageIndex > 0 ? View.VISIBLE : View.INVISIBLE;
+        int older = (pageIndex + 1) * DownloadsController.PAGE_SIZE < state.matchedCount ?
+            View.VISIBLE : View.INVISIBLE;
+        topPreviousPage.setVisibility(newer);
+        previousPage.setVisibility(newer);
+        topNextPage.setVisibility(older);
+        nextPage.setVisibility(older);
+        Set<Integer> visible = new HashSet<>();
         for (int i = 0; i < entries.size(); i++) {
             DownloadItem entry = entries.get(i);
+            visible.add(entry.id);
             Row row = rows.get(entry.id);
             if (row == null) {
                 row = new Row(entry.id);
                 rows.put(entry.id, row);
+                list.addView(row.root, i, row.params);
+            } else if (list.getChildAt(i) != row.root) {
+                list.removeView(row.root);
                 list.addView(row.root, i, row.params);
             }
             row.update(entry);
@@ -92,6 +241,87 @@ final class DownloadsPage {
                 scroll.post(() -> scroll.smoothScrollTo(0, list.getTop() + target.root.getTop()));
                 focused = true;
             }
+        }
+        for (java.util.Iterator<Map.Entry<Integer, Row>> it = rows.entrySet().iterator(); it.hasNext();) {
+            Map.Entry<Integer, Row> entry = it.next();
+            if (!visible.contains(entry.getKey())) {
+                list.removeView(entry.getValue().root);
+                it.remove();
+            }
+        }
+    }
+
+    private LinearLayout pagingRow(LinearLayout page) {
+        LinearLayout paging = new LinearLayout(activity);
+        paging.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(44));
+        params.topMargin = dp(18);
+        page.addView(paging, params);
+        return paging;
+    }
+
+    private Button pageButton(LinearLayout parent, String title) {
+        Button button = new Button(activity);
+        button.setText(title);
+        button.setAllCaps(false);
+        button.setTextColor(PAGE);
+        button.setBackgroundTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -1, 1);
+        params.leftMargin = dp(4);
+        params.rightMargin = dp(4);
+        parent.addView(button, params);
+        return button;
+    }
+
+    private void changePage(int requestedPage) {
+        pageIndex = Math.max(0, requestedPage);
+        focusId = 0;
+        focused = false;
+        refresh();
+        scroll.post(() -> scroll.scrollTo(0, 0));
+    }
+
+    private void pasteSearch() {
+        ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+        ClipData clip = clipboard == null ? null : clipboard.getPrimaryClip();
+        CharSequence value = clip == null || clip.getItemCount() == 0 ? null :
+            clip.getItemAt(0).coerceToText(activity);
+        if (value == null || value.length() == 0) {
+            Toast.makeText(activity, "Clipboard has no text", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        search.setText(value);
+        search.setSelection(search.length());
+    }
+
+    void onFilePicked(int resultCode, Intent data) {
+        int jobId = pendingFileJobId;
+        int photoIndex = pendingPhotoIndex;
+        pendingFileJobId = 0;
+        pendingPhotoIndex = 0;
+        if (resultCode != Activity.RESULT_OK || data == null || data.getData() == null || jobId <= 0) return;
+        Uri selected = data.getData();
+        historyWorker.execute(() -> {
+            boolean linked = controller.relink(jobId, photoIndex, selected);
+            activity.runOnUiThread(() -> {
+                Toast.makeText(activity, linked ? "Saved file linked" :
+                    "File name or size does not match, or access was denied", Toast.LENGTH_LONG).show();
+                refresh();
+            });
+        });
+    }
+
+    private void pickRestoredFile(int jobId, int photoIndex, String mime) {
+        pendingFileJobId = jobId;
+        pendingPhotoIndex = photoIndex;
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(mime)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try { activity.startActivityForResult(pick, RESTORED_FILE_REQUEST); }
+        catch (Exception error) {
+            pendingFileJobId = 0;
+            Toast.makeText(activity, "Could not open the file picker", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -112,9 +342,11 @@ final class DownloadsPage {
         final LinearLayout albumPhotos;
         final ProgressBar progress;
         final Button open;
-        final Button retryMissing;
+        final Button retryButton;
+        final Button findFileButton;
         String shownThumbnail = "";
         int shownPhotoFingerprint;
+        int shownAvailabilityFingerprint;
         long shownUpdatedAt;
         boolean expanded;
 
@@ -134,7 +366,7 @@ final class DownloadsPage {
             root.addView(top);
             thumbnail = new ImageView(activity);
             thumbnail.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            thumbnail.setBackgroundColor(0xff294655);
+            thumbnail.setBackgroundColor(AppPalette.CARD_TOP);
             thumbnail.setImageResource(android.R.drawable.ic_menu_gallery);
             thumbnail.setColorFilter(MUTED);
             top.addView(thumbnail, new LinearLayout.LayoutParams(dp(82), dp(82)));
@@ -152,6 +384,7 @@ final class DownloadsPage {
             progress.setMax(1000);
             progress.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
             progress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+            progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(AppPalette.BORDER));
             LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(-1, dp(8));
             progressParams.topMargin = dp(14);
             root.addView(progress, progressParams);
@@ -170,16 +403,27 @@ final class DownloadsPage {
             openParams.gravity = Gravity.END;
             openParams.topMargin = dp(8);
             root.addView(open, openParams);
-            retryMissing = new Button(activity);
-            retryMissing.setText("Retry missing photos");
-            retryMissing.setAllCaps(false);
-            retryMissing.setTextSize(14);
-            retryMissing.setMinHeight(0);
-            retryMissing.setBackgroundTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+            retryButton = new Button(activity);
+            retryButton.setText("Retry download");
+            retryButton.setAllCaps(false);
+            retryButton.setTextSize(14);
+            retryButton.setTextColor(PAGE);
+            retryButton.setMinHeight(0);
+            retryButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(ACCENT));
             LinearLayout.LayoutParams retryParams = new LinearLayout.LayoutParams(-2, dp(40));
             retryParams.gravity = Gravity.END;
             retryParams.topMargin = dp(8);
-            root.addView(retryMissing, retryParams);
+            root.addView(retryButton, retryParams);
+            findFileButton = new Button(activity);
+            findFileButton.setText("Find saved video");
+            findFileButton.setAllCaps(false);
+            findFileButton.setTextSize(14);
+            findFileButton.setTextColor(PAGE);
+            findFileButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+            LinearLayout.LayoutParams findParams = new LinearLayout.LayoutParams(-2, dp(40));
+            findParams.gravity = Gravity.END;
+            findParams.topMargin = dp(8);
+            root.addView(findFileButton, findParams);
             toggle = text(root, "", 13, ACCENT, true, 10);
             details = text(root, "", 13, MUTED, false, 12);
             error = text(root, "", 13, ERROR, false, 10);
@@ -200,8 +444,13 @@ final class DownloadsPage {
         }
 
         void update(DownloadItem entry) {
-            if (shownUpdatedAt == entry.updatedAt && !entry.isActive()) return;
+            int availabilityFingerprint = entry.savedFilePresent ? 1 : 0;
+            for (DownloadItem.PhotoItem photo : entry.photos)
+                availabilityFingerprint = 31 * availabilityFingerprint + (photo.filePresent ? 1 : 0);
+            if (shownUpdatedAt == entry.updatedAt &&
+                shownAvailabilityFingerprint == availabilityFingerprint && !entry.isActive()) return;
             shownUpdatedAt = entry.updatedAt;
+            shownAvailabilityFingerprint = availabilityFingerprint;
             boolean album = "album".equals(entry.mediaType);
             boolean story = entry.sourceUrl.contains("/stories/") || entry.shareUrl.contains("/stories/");
             title.setText(entry.profileName.isEmpty() ?
@@ -209,21 +458,24 @@ final class DownloadsPage {
                     (story ? "Story " : album ? "Album " : "Video ") + entry.videoId) :
                 "@" + entry.profileName + (story ? album ? " • photo Story" : " • video Story" :
                     album ? entry.photos.size() == 1 ? " • photo" : " • photo album" : ""));
-            state.setText(entry.stage.isEmpty() ? entry.state : entry.stage);
-            state.setTextColor("failed".equals(entry.state) || "partial".equals(entry.state) ? ERROR : ACCENT);
             file.setText(entry.fileName.isEmpty() ? story ? "Reading Story details…" : "Reading post details…" : entry.fileName);
-            int savedPhotos = 0;
-            for (DownloadItem.PhotoItem photo : entry.photos) if (!photo.savedUri.isEmpty()) savedPhotos++;
+            int availablePhotos = 0;
+            for (DownloadItem.PhotoItem photo : entry.photos) if (photo.filePresent) availablePhotos++;
+            boolean missingMedia = entry.missingFile();
+            state.setText(missingMedia ? album ? "Photos missing or changed" : "Video missing or changed" :
+                entry.stage.isEmpty() ? entry.state : entry.stage);
+            state.setTextColor(missingMedia || "failed".equals(entry.state) ||
+                "partial".equals(entry.state) ? ERROR : ACCENT);
             if (album && !entry.photos.isEmpty()) {
                 progress.setVisibility(View.VISIBLE);
                 progress.setIndeterminate(false);
-                progress.setProgress(savedPhotos * 1000 / entry.photos.size());
+                progress.setProgress(availablePhotos * 1000 / entry.photos.size());
             } else if (entry.isActive()) {
                 progress.setVisibility(View.VISIBLE);
                 progress.setIndeterminate(entry.totalBytes <= 0);
                 if (entry.totalBytes > 0) progress.setProgress((int) Math.min(1000,
                     entry.downloadedBytes * 1000 / entry.totalBytes));
-            } else if ("complete".equals(entry.state)) {
+            } else if ("complete".equals(entry.state) && !missingMedia) {
                 progress.setVisibility(View.VISIBLE);
                 progress.setIndeterminate(false);
                 progress.setProgress(1000);
@@ -231,12 +483,15 @@ final class DownloadsPage {
                 progress.setVisibility(View.GONE);
             }
             String amount;
-            if (album) amount = (entry.photos.size() == 1 && savedPhotos == 1 ? "1 photo saved" :
-                savedPhotos + " of " + entry.photos.size() + " photos saved") + " • " + bytes(entry.downloadedBytes);
+            if (album) amount = (entry.photos.size() == 1 && availablePhotos == 1 ? "1 photo on phone" :
+                availablePhotos + " of " + entry.photos.size() + " photos on phone") +
+                " • " + bytes(entry.downloadedBytes);
             else {
-                amount = "Downloaded: " + bytes(entry.downloadedBytes) + " / " +
+                amount = missingMedia ? "Previously downloaded: " + bytes(entry.downloadedBytes) :
+                    "Downloaded: " + bytes(entry.downloadedBytes) + " / " +
                     (entry.totalBytes > 0 ? bytes(entry.totalBytes) : "size unknown");
-                if (entry.totalBytes > 0) amount += " (" + Math.min(100, entry.downloadedBytes * 100 / entry.totalBytes) + "%)";
+                if (!missingMedia && entry.totalBytes > 0)
+                    amount += " (" + Math.min(100, entry.downloadedBytes * 100 / entry.totalBytes) + "%)";
             }
             size.setText(amount);
             if ("downloading".equals(entry.state)) {
@@ -264,10 +519,11 @@ final class DownloadsPage {
             if (!entry.hashtags.isEmpty()) metadata.append("Hashtags: ").append(entry.hashtags).append('\n');
             metadata.append("Started: ").append(date(entry.createdAt));
             if (entry.finishedAt > 0) metadata.append("\nFinished: ").append(date(entry.finishedAt));
-            if ("complete".equals(entry.state)) metadata.append("\nSaved in: Downloads");
+            if ("complete".equals(entry.state) && !missingMedia) metadata.append("\nSaved in: Downloads");
             details.setText(metadata.toString());
-            error.setVisibility(entry.error.isEmpty() ? View.GONE : View.VISIBLE);
-            error.setText(entry.error.isEmpty() ? "" : "Error: " + entry.error);
+            String displayError = missingMedia ? "Saved file name or size differs, or the file is missing" : entry.error;
+            error.setVisibility(displayError.isEmpty() ? View.GONE : View.VISIBLE);
+            error.setText(displayError.isEmpty() ? "" : missingMedia ? displayError : "Error: " + displayError);
             String postUrl = entry.postUrl();
             String appName = entry.fromInstagram() ? "Instagram" : entry.fromRedNote() ? "RedNote" : "TikTok";
             tiktokLink.setText("Open in " + appName + " ↗");
@@ -277,25 +533,40 @@ final class DownloadsPage {
             if (entry.isActive() && !expanded) expanded = true;
             toggle.setText(expanded ? "Hide details ▲" : "Show details ▼");
             details.setVisibility(expanded ? View.VISIBLE : View.GONE);
-            boolean canOpen = !album && "complete".equals(entry.state) && !entry.savedUri.isEmpty();
+            boolean canOpen = !album && "complete".equals(entry.state) && entry.savedFilePresent;
             open.setVisibility(canOpen ? View.VISIBLE : View.GONE);
             open.setOnClickListener(v -> openVideo(entry.savedUri));
-            String firstPhotoUri = album && !entry.photos.isEmpty() ? entry.photos.get(0).savedUri : "";
-            thumbnail.setClickable(canOpen || !firstPhotoUri.isEmpty());
-            thumbnail.setContentDescription(album ? "Open first downloaded photo" : canOpen ? "Play downloaded video" : null);
+            DownloadItem.PhotoItem firstPhoto = null;
+            if (album) for (DownloadItem.PhotoItem photo : entry.photos)
+                if (photo.filePresent) { firstPhoto = photo; break; }
+            final DownloadItem.PhotoItem availablePreview = firstPhoto;
+            thumbnail.setClickable(canOpen || availablePreview != null);
+            thumbnail.setContentDescription(availablePreview != null ? "Open downloaded photo" :
+                canOpen ? "Play downloaded video" : null);
             thumbnail.setOnClickListener(canOpen ? v -> openVideo(entry.savedUri) :
-                !firstPhotoUri.isEmpty() ? v -> openPhoto(firstPhotoUri, entry.photos.get(0).mime) : null);
-            retryMissing.setVisibility(album && !entry.isActive() && savedPhotos < entry.photos.size() &&
-                !entry.photos.isEmpty() ? View.VISIBLE : View.GONE);
-            retryMissing.setOnClickListener(v -> {
+                availablePreview != null ? v -> openPhoto(availablePreview.savedUri, availablePreview.mime) : null);
+            boolean canRetry = DownloadRetry.allowed(entry.state, entry.mediaType, availablePhotos,
+                entry.photos.size(), entry.savedFilePresent, entry.shareUrl, entry.sourceUrl, entry.videoId);
+            retryButton.setVisibility(canRetry ? View.VISIBLE : View.GONE);
+            retryButton.setText(missingMedia ? album ? "Redownload missing photos" : "Redownload video" :
+                album && !entry.photos.isEmpty() ? "Retry missing photos" : "Retry download");
+            retryButton.setEnabled(true);
+            retryButton.setOnClickListener(v -> {
                 Intent retry = new Intent(activity, DownloadService.class).putExtra("retryJobId", entry.id);
-                activity.startForegroundService(retry);
-                retryMissing.setEnabled(false);
+                retryButton.setEnabled(false);
+                shownUpdatedAt = -1;
+                try { activity.startForegroundService(retry); }
+                catch (Exception startError) {
+                    retryButton.setEnabled(true);
+                    Toast.makeText(activity, "Could not start retry", Toast.LENGTH_LONG).show();
+                }
             });
+            findFileButton.setVisibility(missingMedia && !album ? View.VISIBLE : View.GONE);
+            findFileButton.setOnClickListener(v -> pickRestoredFile(entry.id, 0, "video/*"));
             int photoFingerprint = 1;
             for (DownloadItem.PhotoItem photo : entry.photos)
                 photoFingerprint = 31 * photoFingerprint +
-                    (photo.savedUri + photo.error + photo.thumbnailPath).hashCode();
+                    (photo.savedUri + photo.error + photo.thumbnailPath + photo.filePresent).hashCode();
             if (shownPhotoFingerprint != photoFingerprint) {
                 shownPhotoFingerprint = photoFingerprint;
                 albumPhotos.removeAllViews();
@@ -312,14 +583,17 @@ final class DownloadsPage {
                         photoPreview.setImageBitmap(preview);
                         photoRow.addView(photoPreview, new LinearLayout.LayoutParams(dp(64), dp(64)));
                         photoPreview.setContentDescription("Open photo " + photo.index);
-                        photoPreview.setOnClickListener(v -> openPhoto(photo.savedUri, photo.mime));
+                        if (photo.filePresent)
+                            photoPreview.setOnClickListener(v -> openPhoto(photo.savedUri, photo.mime));
                     }
                 }
                 String label = "Photo " + photo.index + " / " + entry.photos.size() + " • " +
-                    (!photo.savedUri.isEmpty() ? bytes(photo.bytes) + " • " + photo.width + " × " + photo.height :
+                    (photo.filePresent ? bytes(photo.bytes) + " • " + photo.width + " × " + photo.height :
+                        !photo.savedUri.isEmpty() ? "missing or changed on phone" :
                         photo.error.isEmpty() ? "waiting" : "failed: " + photo.error);
-                text(photoRow, label, 13, photo.error.isEmpty() ? TEXT : ERROR, true, 0);
-                if (!photo.savedUri.isEmpty() && photo.sourceWidth > 0 && photo.sourceHeight > 0) {
+                text(photoRow, label, 13, photo.filePresent || photo.error.isEmpty() && photo.savedUri.isEmpty() ?
+                    TEXT : ERROR, true, 0);
+                if (photo.filePresent && photo.sourceWidth > 0 && photo.sourceHeight > 0) {
                     boolean matches = PhotoQuality.matchesListed(photo.width, photo.height,
                         photo.sourceWidth, photo.sourceHeight);
                     text(photoRow, matches ? "Matches " + appName + "'s listed resolution" :
@@ -327,7 +601,7 @@ final class DownloadsPage {
                         12, matches ? ACCENT : ERROR, false, 2);
                 }
                 if (!photo.fileName.isEmpty()) text(photoRow, photo.fileName, 12, MUTED, false, 2);
-                if (!photo.savedUri.isEmpty()) {
+                if (photo.filePresent) {
                     Button openPhoto = new Button(activity);
                     openPhoto.setText("Open photo");
                     openPhoto.setAllCaps(false);
@@ -337,6 +611,17 @@ final class DownloadsPage {
                     photoButton.topMargin = dp(3);
                     photoRow.addView(openPhoto, photoButton);
                     openPhoto.setOnClickListener(v -> openPhoto(photo.savedUri, photo.mime));
+                } else if (!photo.fileName.isEmpty() && (photo.bytes > 0 ||
+                    "image/jpeg".equals(photo.mime) && photo.width > 0 && photo.height > 0)) {
+                    Button findPhoto = new Button(activity);
+                    findPhoto.setText("Find saved photo");
+                    findPhoto.setAllCaps(false);
+                    findPhoto.setTextSize(12);
+                    findPhoto.setMinHeight(0);
+                    LinearLayout.LayoutParams photoButton = new LinearLayout.LayoutParams(-2, dp(36));
+                    photoButton.topMargin = dp(3);
+                    photoRow.addView(findPhoto, photoButton);
+                    findPhoto.setOnClickListener(v -> pickRestoredFile(entry.id, photo.index, "image/*"));
                 }
             }
             }
@@ -410,10 +695,10 @@ final class DownloadsPage {
     }
 
     private GradientDrawable cardBackground(boolean selected) {
-        GradientDrawable background = new GradientDrawable();
-        background.setColor(CARD);
+        GradientDrawable background = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            new int[]{AppPalette.CARD_TOP, CARD});
         background.setCornerRadius(dp(18));
-        if (selected) background.setStroke(dp(2), ACCENT);
+        background.setStroke(dp(selected ? 2 : 1), selected ? ACCENT : AppPalette.BORDER);
         return background;
     }
 

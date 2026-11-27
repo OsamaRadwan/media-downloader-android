@@ -29,6 +29,8 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -42,11 +44,13 @@ public class MainActivity extends Activity {
     private static final String SETTINGS_PAGE = "settings";
     private static final int PICK_ICON_REQUEST = 42;
     private static final int EXPORT_DIAGNOSTICS_REQUEST = 43;
-    private static final int PAGE = 0xff102330;
-    private static final int CARD = 0xff1b3443;
-    private static final int TEXT = 0xfff3f7f9;
-    private static final int MUTED = 0xffb8cbd2;
-    private static final int ACCENT = 0xff54dbc5;
+    private static final int VPN_PROVISION_REQUEST = 44;
+    private static final int VPN_CA_REQUEST = 45;
+    private static final int PAGE = AppPalette.PAGE;
+    private static final int CARD = AppPalette.CARD;
+    private static final int TEXT = AppPalette.TEXT;
+    private static final int MUTED = AppPalette.MUTED;
+    private static final int ACCENT = AppPalette.ACCENT;
     private OverlayPreferences prefs;
     private CustomIconStore customIcons;
     private String currentPage = DOWNLOADS_PAGE;
@@ -76,11 +80,14 @@ public class MainActivity extends Activity {
     private TextView accessibilityStatus;
     private TextView notificationStatus;
     private TextView diagnosticsStatus;
+    private TextView networkRouteStatus;
+    private TextView vpnStatus;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().setStatusBarColor(PAGE);
         getWindow().setNavigationBarColor(PAGE);
+        getWindow().getDecorView().setSystemUiVisibility(0);
         prefs = new SharedPreferencesOverlayPreferences(this);
         customIcons = new CustomIconStore(this);
         downloadRepository = new PreferencesDownloadRepository(this);
@@ -131,13 +138,39 @@ public class MainActivity extends Activity {
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
+        PreferencesDownloadRepository.clearFileChecks();
         refreshStatus();
+        if (downloadsPage != null) downloadsPage.refresh();
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == DownloadsPage.RESTORED_FILE_REQUEST) {
+            if (downloadsPage != null) downloadsPage.onFilePicked(resultCode, data);
+            return;
+        }
         if (requestCode == EXPORT_DIAGNOSTICS_REQUEST) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) writeDiagnostics(data.getData());
+            return;
+        }
+        if (requestCode == VPN_PROVISION_REQUEST) {
+            refreshStatus();
+            Toast.makeText(this, resultCode == RESULT_OK ? "VPN profile configured. Tap Connect when ready." :
+                "VPN setup was canceled", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (requestCode == VPN_CA_REQUEST) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                try (java.io.InputStream input = getContentResolver().openInputStream(data.getData())) {
+                    if (input == null) throw new Exception("Selected certificate could not be opened");
+                    PlatformVpn.importCa(this, input);
+                    Toast.makeText(this, "VPN CA certificate imported", Toast.LENGTH_LONG).show();
+                    refreshStatus();
+                } catch (Exception error) {
+                    DiagnosticsStore.record(this, "vpn.ca_import", error);
+                    Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            }
             return;
         }
         if (requestCode != PICK_ICON_REQUEST || resultCode != RESULT_OK || data == null || data.getData() == null) return;
@@ -186,6 +219,8 @@ public class MainActivity extends Activity {
         accessibilityStatus = null;
         notificationStatus = null;
         diagnosticsStatus = null;
+        networkRouteStatus = null;
+        vpnStatus = null;
         if (DOWNLOADS_PAGE.equals(currentPage)) {
             downloadsPage = new DownloadsPage(this, new DownloadsController(downloadRepository), focusJobId);
             root.addView(downloadsPage.view(), new LinearLayout.LayoutParams(-1, 0, 1));
@@ -248,6 +283,7 @@ public class MainActivity extends Activity {
         FrameLayout previewCard = new FrameLayout(this);
         GradientDrawable previewBackground = new GradientDrawable();
         previewBackground.setColor(CARD);
+        previewBackground.setStroke(dp(1), AppPalette.BORDER);
         previewBackground.setCornerRadius(dp(18));
         previewCard.setBackground(previewBackground);
         LinearLayout.LayoutParams previewCardParams = new LinearLayout.LayoutParams(-1, dp(120));
@@ -351,6 +387,24 @@ public class MainActivity extends Activity {
             startActivity(intent);
         });
 
+        section(page, "Download network");
+        addText(page, "Use Android's current network and VPN, or route this app's HTTPS requests through your own HTTP or SOCKS proxy. A proxy also travels through an active system VPN. New requests use saved changes immediately.", 13, MUTED, false, 7);
+        networkRouteStatus = addText(page, "", 14, TEXT, false, 10);
+        button(page, "Choose connection route", this::chooseNetworkRoute);
+        button(page, "Test connection route", this::testNetworkRoute);
+
+        section(page, "In-app VPN");
+        addText(page, "Configure an IKEv2 server with a pre-shared key or username and password. Import a provider CA certificate when required. Android manages the tunnel and asks for VPN consent. Connecting replaces the phone's current VPN until you disconnect or switch it back.", 13, MUTED, false, 7);
+        vpnStatus = addText(page, "", 14, TEXT, false, 10);
+        button(page, "Configure IKEv2 VPN", this::configureVpn);
+        button(page, "Import VPN CA certificate", this::pickVpnCa);
+        button(page, "Remove imported VPN CA", () -> {
+            PlatformVpn.clearCa(this);
+            refreshStatus();
+        });
+        button(page, "Connect VPN", () -> vpnAction(true));
+        button(page, "Disconnect VPN", () -> vpnAction(false));
+
         section(page, "Diagnostics");
         addText(page, "Keeps dated logs for the current UTC day and six prior days, with a size limit for each day. Export device details, failed jobs, and operation traces when a feature fails. Reports can include public post links with tracking details removed.", 13, MUTED, false, 7);
         diagnosticsStatus = addText(page, "", 13, MUTED, false, 10);
@@ -399,6 +453,151 @@ public class MainActivity extends Activity {
         catch (RuntimeException error) {
             DiagnosticsStore.record(this, "settings.export_picker", error);
             Toast.makeText(this, "Could not open a file picker", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void chooseNetworkRoute() {
+        NetworkRoute current = NetworkRouteStore.load(this);
+        String[] choices = {"Android system network and VPN", "HTTP proxy", "SOCKS proxy"};
+        new AlertDialog.Builder(this).setTitle("Connection route")
+            .setSingleChoiceItems(choices, current.mode, (dialog, selected) -> {
+                dialog.dismiss();
+                if (selected == NetworkRoute.SYSTEM) {
+                    NetworkRouteStore.save(this, NetworkRoute.create(NetworkRoute.SYSTEM, "", 0));
+                    refreshStatus();
+                } else showProxySettings(selected, current);
+            }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void showProxySettings(int mode, NetworkRoute current) {
+        LinearLayout fields = new LinearLayout(this);
+        fields.setOrientation(LinearLayout.VERTICAL);
+        fields.setPadding(dp(20), dp(8), dp(20), 0);
+        EditText host = new EditText(this);
+        host.setSingleLine(true);
+        host.setHint("Proxy host or IP address");
+        host.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        host.setText(current.host);
+        fields.addView(host);
+        EditText port = new EditText(this);
+        port.setSingleLine(true);
+        port.setHint("Port");
+        port.setInputType(InputType.TYPE_CLASS_NUMBER);
+        if (current.port > 0) port.setText(Integer.toString(current.port));
+        fields.addView(port);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle(mode == NetworkRoute.HTTP_PROXY ? "HTTP proxy" : "SOCKS proxy")
+            .setView(fields).setNegativeButton("Cancel", null)
+            .setPositiveButton("Save", null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+            try {
+                int number = Integer.parseInt(port.getText().toString().trim());
+                NetworkRouteStore.save(this, NetworkRoute.create(mode, host.getText().toString(), number));
+                refreshStatus();
+                dialog.dismiss();
+            } catch (RuntimeException error) {
+                Toast.makeText(this, error.getMessage() == null ? "Enter a valid proxy port" : error.getMessage(), Toast.LENGTH_LONG).show();
+            }
+        }));
+        dialog.show();
+    }
+
+    private void testNetworkRoute() {
+        NetworkRoute route = NetworkRouteStore.load(this);
+        if (networkRouteStatus != null) networkRouteStatus.setText("Testing " + route.label() + "…");
+        new Thread(() -> {
+            String message = route.label() + "\nHTTPS: " + probeRoute(route, "https://example.com/") +
+                "\nTikTok: " + probeRoute(route, "https://www.tiktok.com/");
+            runOnUiThread(() -> { if (networkRouteStatus != null) networkRouteStatus.setText(message); });
+        }, "network-route-test").start();
+    }
+
+    private String probeRoute(NetworkRoute route, String url) {
+        HttpURLConnection connection = null;
+        try {
+            connection = route.open(new URL(url));
+            connection.setRequestMethod("HEAD");
+            connection.setConnectTimeout(8000);
+            connection.setReadTimeout(8000);
+            return "HTTP " + connection.getResponseCode();
+        } catch (Exception error) {
+            DiagnosticsStore.record(this, "network.route_test host=" +
+                (url.contains("tiktok") ? "tiktok" : "example"), error);
+            return error.getClass().getSimpleName();
+        } finally { if (connection != null) connection.disconnect(); }
+    }
+
+    private void configureVpn() {
+        if (!PlatformVpn.supported(this)) {
+            Toast.makeText(this, "IKEv2 VPN is unavailable on this phone", Toast.LENGTH_LONG).show();
+            return;
+        }
+        new AlertDialog.Builder(this).setTitle("VPN authentication")
+            .setItems(new String[]{"Pre-shared key", "Username and password"},
+                (dialog, mode) -> showVpnConfig(mode)).show();
+    }
+
+    private void pickVpnCa() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(intent, VPN_CA_REQUEST);
+    }
+
+    private void showVpnConfig(int mode) {
+        LinearLayout fields = new LinearLayout(this);
+        fields.setOrientation(LinearLayout.VERTICAL);
+        fields.setPadding(dp(20), dp(8), dp(20), 0);
+        EditText server = new EditText(this);
+        server.setSingleLine(true);
+        server.setHint("Server host or IP");
+        server.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        fields.addView(server);
+        EditText identity = new EditText(this);
+        identity.setSingleLine(true);
+        identity.setHint("Server identity");
+        fields.addView(identity);
+        EditText username = new EditText(this);
+        if (mode == PlatformVpn.USER_PASSWORD) {
+            username.setSingleLine(true);
+            username.setHint("VPN username");
+            fields.addView(username);
+        }
+        EditText key = new EditText(this);
+        key.setSingleLine(true);
+        key.setHint(mode == PlatformVpn.PSK ? "Pre-shared key" : "VPN password");
+        key.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        fields.addView(key);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("IKEv2 VPN profile")
+            .setView(fields).setNegativeButton("Cancel", null)
+            .setPositiveButton("Configure", null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+            try {
+                Intent consent = PlatformVpn.provision(this, server.getText().toString(),
+                    identity.getText().toString(), mode, username.getText().toString(), key.getText().toString());
+                key.setText("");
+                dialog.dismiss();
+                if (consent != null) startActivityForResult(consent, VPN_PROVISION_REQUEST);
+                else {
+                    refreshStatus();
+                    Toast.makeText(this, "VPN profile configured. Tap Connect when ready.", Toast.LENGTH_LONG).show();
+                }
+            } catch (RuntimeException error) {
+                Toast.makeText(this, error.getMessage() == null ? "Could not configure VPN" : error.getMessage(), Toast.LENGTH_LONG).show();
+                DiagnosticsStore.record(this, "vpn.configure", error);
+            }
+        }));
+        dialog.show();
+    }
+
+    private void vpnAction(boolean connect) {
+        try {
+            if (connect) PlatformVpn.connect(this);
+            else PlatformVpn.disconnect(this);
+            refreshStatus();
+        } catch (RuntimeException error) {
+            DiagnosticsStore.record(this, connect ? "vpn.connect" : "vpn.disconnect", error);
+            Toast.makeText(this, error.getMessage() == null ? "VPN action failed" : error.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -639,5 +838,8 @@ public class MainActivity extends Activity {
         notificationStatus.setText("Notifications: " + (notifications ? "Allowed" : "Off"));
         if (diagnosticsStatus != null)
             diagnosticsStatus.setText("Saved failure events: " + diagnosticsRepository.eventCount());
+        if (networkRouteStatus != null) networkRouteStatus.setText("Current route: " + NetworkRouteStore.load(this).label());
+        if (vpnStatus != null) vpnStatus.setText(PlatformVpn.status(this) +
+            (PlatformVpn.hasCa(this) ? " • CA certificate imported" : " • system CA certificates"));
     }
 }

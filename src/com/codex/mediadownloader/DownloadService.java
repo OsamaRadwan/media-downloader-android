@@ -15,9 +15,12 @@ import android.net.http.HttpEngine;
 import android.os.Build;
 import android.os.Environment;
 import android.os.IBinder;
+import android.os.Looper;
+import android.os.Handler;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.util.Log;
+import android.widget.Toast;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -44,6 +47,16 @@ public class DownloadService extends Service {
     private final Object serviceLock = new Object();
     private int pendingDownloads;
     private boolean foregroundStarted;
+    private final Set<Integer> activeJobIds = new HashSet<>();
+
+    private static final class Duplicate {
+        final DownloadStore.Entry entry;
+        final boolean active;
+        final boolean present;
+        Duplicate(DownloadStore.Entry entry, boolean active, boolean present) {
+            this.entry = entry; this.active = active; this.present = present;
+        }
+    }
 
     @Override public void onCreate() {
         super.onCreate();
@@ -60,15 +73,39 @@ public class DownloadService extends Service {
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        String requested = intent == null ? null : intent.getStringExtra("shareUrl");
         int retryJobId = intent == null ? 0 : intent.getIntExtra("retryJobId", 0);
-        DownloadStore.Entry retry = retryJobId > 0 ? DownloadStore.find(this, retryJobId) : null;
-        if (retryJobId > 0 && (retry == null || !"album".equals(retry.mediaType) || retry.isActive()))
-            return START_NOT_STICKY;
-        String shareUrl = retry == null ? (intent == null ? null : intent.getStringExtra("shareUrl")) : retry.shareUrl;
-        if (shareUrl == null || shareUrl.isEmpty()) {
-            synchronized (serviceLock) {
-                if (pendingDownloads == 0) stopSelfResult(startId);
+        DownloadStore.Entry retry = retryJobId != 0 ? DownloadStore.find(this, retryJobId) : null;
+        if (retryJobId == 0) {
+            Duplicate duplicate = findDuplicate(requested, "", 0);
+            if (duplicate != null) {
+                if (duplicate.active || duplicate.present) {
+                    feedback(duplicate.active ? "Already downloading" : "Already downloaded");
+                    finishIgnoredStart(startId);
+                    return START_NOT_STICKY;
+                }
+                retry = duplicate.entry;
+                retryJobId = retry.id;
             }
+        }
+        if (retryJobId != 0) {
+            if (retry == null || !canRetry(retry)) {
+                finishIgnoredStart(startId);
+                return START_NOT_STICKY;
+            }
+            Duplicate other = findDuplicate(DownloadRetry.url(retry.shareUrl, retry.sourceUrl, retry.videoId),
+                DownloadIdentity.fromEntry(retry.sourceUrl, retry.shareUrl, retry.videoId), retry.id);
+            if (other != null && DownloadRetry.blockedByOther(other.active, other.present,
+                restoringRecordedFile(retry))) {
+                feedback(other.active ? "Already downloading" : "Already downloaded");
+                finishIgnoredStart(startId);
+                return START_NOT_STICKY;
+            }
+        }
+        String shareUrl = retry == null ? requested : DownloadRetry.retryUrl(
+            retry.shareUrl, retry.sourceUrl, retry.videoId, requested);
+        if (shareUrl == null || shareUrl.isEmpty()) {
+            finishIgnoredStart(startId);
             return START_NOT_STICKY;
         }
         int jobId;
@@ -80,6 +117,7 @@ public class DownloadService extends Service {
                 jobs.edit().putInt("next_id", jobId == Integer.MAX_VALUE ? FIRST_JOB_ID : jobId + 1).commit();
             }
             pendingDownloads++;
+            activeJobIds.add(jobId);
             if (!foregroundStarted) {
                 startForeground(NOTIFICATION_ID, summaryNotice(pendingDownloads), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
                 foregroundStarted = true;
@@ -88,16 +126,45 @@ public class DownloadService extends Service {
             }
         }
         DownloadStore.Entry entry = retry == null ? new DownloadStore.Entry(jobId) : retry;
+        boolean isRetry = retry != null;
         entry.shareUrl = shareUrl;
+        if (retry != null && !retry.photos.isEmpty()) {
+            long retainedBytes = 0;
+            for (DownloadStore.Entry.Photo photo : retry.photos) {
+                String resolved = SavedMedia.resolve(this, photo.savedUri, photo.fileName, photo.bytes);
+                if (resolved.isEmpty()) {
+                    photo.savedUri = "";
+                } else {
+                    photo.savedUri = resolved;
+                    retainedBytes += photo.bytes;
+                }
+            }
+            entry.downloadedBytes = retainedBytes;
+            entry.speedBytesPerSecond = 0;
+        }
+        if (retry != null && retry.photos.isEmpty()) {
+            entry.downloadedBytes = 0;
+            entry.totalBytes = -1;
+            entry.speedBytesPerSecond = 0;
+            entry.streamOption = 0;
+            entry.savedUri = "";
+            entry.width = 0;
+            entry.height = 0;
+            entry.videoMime = "";
+            entry.audioMime = "";
+            entry.durationMs = 0;
+        }
         entry.state = "queued";
-        entry.stage = retry == null ? "Waiting to start" : "Retrying missing photos";
+        entry.stage = retry == null ? "Waiting to start" :
+            retry.photos.isEmpty() ? "Retrying download" : "Retrying missing photos";
         entry.error = "";
         entry.finishedAt = 0;
         DownloadStore.save(this, entry, true);
         DiagnosticsStore.trace(this, "download.queued", "job=" + jobId + " retry=" + (retry != null) +
             " source=" + DiagnosticsFormat.publicPostUrl(shareUrl));
+        if (retry != null) notifications.cancel(-jobId);
         notifications.notify(jobId, notice(jobId, "Download " + jobId, "Waiting to start", 0, true, true));
-        transfers.execute(() -> runDownload(shareUrl, jobId, startId, entry, retry != null));
+        transfers.execute(() -> runDownload(shareUrl, jobId, startId, entry, isRetry));
         return START_NOT_STICKY;
     }
 
@@ -115,8 +182,39 @@ public class DownloadService extends Service {
             StreamResolver.Result result = InstagramResolver.accepts(shareUrl) ?
                 InstagramResolver.resolve(shareUrl, trace) : RedNoteResolver.accepts(shareUrl) ?
                 RedNoteResolver.resolve(shareUrl, trace) : StreamResolver.resolve(shareUrl, trace);
-            if (retry && (!result.isAlbum() || !result.videoId.equals(entry.videoId)))
-                throw new Exception("The shared album no longer matches this job");
+            if (retry && !entry.videoId.isEmpty() &&
+                (!result.videoId.equals(entry.videoId) ||
+                 result.isAlbum() != "album".equals(entry.mediaType)))
+                throw new Exception("The source post no longer matches this download");
+            if (!retry) {
+                String resolvedKey = DownloadIdentity.fromResolved(result.platform, result.videoId);
+                Duplicate duplicate;
+                synchronized (serviceLock) {
+                    duplicate = findDuplicate(shareUrl, resolvedKey, jobId);
+                    if (duplicate == null) {
+                        entry.videoId = result.videoId;
+                        entry.sourceUrl = SourcePostUrl.forMetadata(result.pageUrl);
+                        DownloadStore.save(this, entry, true);
+                    }
+                }
+                if (duplicate != null) {
+                    DownloadStore.delete(this, jobId);
+                    if (!duplicate.active && !duplicate.present) {
+                        try {
+                            startForegroundService(new Intent(this, DownloadService.class)
+                                .putExtra("retryJobId", duplicate.entry.id)
+                                .putExtra("shareUrl", shareUrl));
+                        } catch (RuntimeException startError) {
+                            DiagnosticsStore.record(this, "download.redownload_start", startError);
+                            feedback("Could not start redownload");
+                        }
+                    } else feedback(duplicate.active ? "Already downloading" : "Already downloaded");
+                    DiagnosticsStore.trace(this, "download.duplicate", "job=" + jobId +
+                        " existing=" + duplicate.entry.id + " active=" + duplicate.active +
+                        " present=" + duplicate.present);
+                    return;
+                }
+            }
             for (HttpCookie cookie : result.cookies.getCookieStore().getCookies())
                 Log.d("MediaDownloader", "Page cookie " + cookie.getName() + " domain=" + cookie.getDomain());
             title = result.profileName + " • " + result.videoId;
@@ -208,6 +306,7 @@ public class DownloadService extends Service {
             notifications.cancel(jobId);
             synchronized (serviceLock) {
                 pendingDownloads--;
+                activeJobIds.remove(jobId);
                 if (pendingDownloads == 0) {
                     stopForeground(STOP_FOREGROUND_REMOVE);
                     foregroundStarted = false;
@@ -217,6 +316,62 @@ public class DownloadService extends Service {
                 }
             }
         }
+    }
+
+    private boolean canRetry(DownloadStore.Entry entry) {
+        int photos = "album".equals(entry.mediaType) ? SavedMedia.availablePhotos(this, entry) : 0;
+        boolean videoPresent = !"album".equals(entry.mediaType) && SavedMedia.matches(this,
+            entry.savedUri, entry.fileName,
+            entry.downloadedBytes > 0 ? entry.downloadedBytes : entry.totalBytes);
+        return DownloadRetry.allowed(entry.state, entry.mediaType, photos, entry.photos.size(),
+            videoPresent, entry.shareUrl, entry.sourceUrl, entry.videoId);
+    }
+
+    private boolean restoringRecordedFile(DownloadStore.Entry entry) {
+        if ("album".equals(entry.mediaType)) {
+            for (DownloadStore.Entry.Photo photo : entry.photos)
+                if (!photo.fileName.isEmpty() && photo.bytes > 0 &&
+                    !SavedMedia.matches(this, photo.savedUri, photo.fileName, photo.bytes)) return true;
+            return false;
+        }
+        long bytes = entry.downloadedBytes > 0 ? entry.downloadedBytes : entry.totalBytes;
+        return !entry.fileName.isEmpty() && bytes > 0 &&
+            !SavedMedia.matches(this, entry.savedUri, entry.fileName, bytes);
+    }
+
+    private Duplicate findDuplicate(String link, String resolvedKey, int excludedId) {
+        String urlKey = DownloadIdentity.fromUrl(link);
+        if (urlKey.isEmpty() && (resolvedKey == null || resolvedKey.isEmpty())) return null;
+        Duplicate complete = null;
+        Duplicate retryable = null;
+        for (DownloadStore.Entry existing : DownloadStore.list(this)) {
+            if (existing.id == excludedId || !DownloadIdentity.matches(urlKey,
+                resolvedKey == null ? "" : resolvedKey, existing.sourceUrl, existing.shareUrl,
+                existing.videoId)) continue;
+            if (activeJobIds.contains(existing.id)) return new Duplicate(existing, true, false);
+            boolean present = SavedMedia.complete(this, existing);
+            if (present && complete == null) complete = new Duplicate(existing, false, true);
+            else if (!present && retryable == null && canRetry(existing))
+                retryable = new Duplicate(existing, false, false);
+        }
+        return complete != null ? complete : retryable;
+    }
+
+    private void finishIgnoredStart(int startId) {
+        synchronized (serviceLock) {
+            if (pendingDownloads == 0) {
+                if (!foregroundStarted) {
+                    startForeground(NOTIFICATION_ID, summaryNotice(0),
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+                    stopForeground(STOP_FOREGROUND_REMOVE);
+                }
+                stopSelfResult(startId);
+            }
+        }
+    }
+
+    private void feedback(String message) {
+        new Handler(Looper.getMainLooper()).post(() -> Toast.makeText(this, message, Toast.LENGTH_SHORT).show());
     }
 
     private SavedVideo transfer(StreamResolver.Result result, int jobId, String title, String fileName,
@@ -396,8 +551,8 @@ public class DownloadService extends Service {
                        boolean visitorCookies,
                        File file, String label, int jobId, String title, String fileName,
                        int width, int height, DownloadStore.Entry entry) throws Exception {
-        HttpEngine engine = profile == 5 ? new HttpEngine.Builder(this).build() : null;
-        HttpURLConnection connection = engine == null ? (HttpURLConnection) new URL(url).openConnection() :
+        HttpEngine engine = profile == 5 && !NetworkRouteStore.usesProxy() ? new HttpEngine.Builder(this).build() : null;
+        HttpURLConnection connection = engine == null ? NetworkRouteStore.open(new URL(url)) :
             (HttpURLConnection) engine.openConnection(new URL(url));
         connection.setConnectTimeout(15000);
         connection.setReadTimeout(30000);

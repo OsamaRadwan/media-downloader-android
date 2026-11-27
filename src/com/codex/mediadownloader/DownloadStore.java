@@ -257,6 +257,23 @@ final class DownloadStore {
         catch (JSONException error) { return null; }
     }
 
+    static synchronized void delete(Context context, int id) {
+        if (!context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().remove(PREFIX + id).commit())
+            DiagnosticsStore.record(context, "history.delete", "Could not remove duplicate placeholder");
+    }
+
+    static void interruptStale(Context context) {
+        for (Entry entry : list(context)) {
+            if (!entry.isActive()) continue;
+            entry.state = "interrupted";
+            entry.stage = "Interrupted";
+            entry.error = "Download stopped before completion";
+            entry.speedBytesPerSecond = 0;
+            entry.finishedAt = System.currentTimeMillis();
+            save(context, entry, true);
+        }
+    }
+
     static synchronized void importExistingAsync(Context context) {
         Context app = context.getApplicationContext();
         if (importRunning || app.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean("legacy_imported", false)) return;

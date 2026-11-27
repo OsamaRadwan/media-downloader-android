@@ -9,6 +9,8 @@ public final class MediaDownloaderApplication extends Application {
 
     @Override public void onCreate() {
         super.onCreate();
+        NetworkRouteStore.init(this);
+        DownloadStore.interruptStale(this);
         DiagnosticsStore.prune(this);
         DiagnosticsStore.trace(this, "app.start", "process started");
         diagnosticsHandler = new Handler(Looper.getMainLooper());

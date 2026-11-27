@@ -6,6 +6,8 @@ import java.net.HttpURLConnection;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.URL;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -109,7 +111,7 @@ public final class StreamResolver {
 
     static Identity identity(String shareUrl, Trace trace) throws Exception {
         CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
-        JSONObject item = itemFromPage(fetchText(shareUrl, null, DESKTOP, cookies, trace),
+        JSONObject item = itemFromPage(fetchTextWithRetry(shareUrl, null, DESKTOP, cookies, trace),
             "webapp.reflow.video.detail");
         String postId = item.optString("id", "");
         JSONObject author = item.optJSONObject("author");
@@ -127,7 +129,7 @@ public final class StreamResolver {
         boolean photoLink = false;
         if (videoId == null) {
             StringBuilder redirected = new StringBuilder();
-            String sharedHtml = fetchText(shareUrl, redirected, DESKTOP, cookies, trace);
+            String sharedHtml = fetchTextWithRetry(shareUrl, redirected, DESKTOP, cookies, trace);
             Matcher photo = PHOTO_ID.matcher(redirected.toString());
             if (photo.find()) {
                 videoId = photo.group(1);
@@ -142,7 +144,16 @@ public final class StreamResolver {
         // TikTok sometimes omits its visitor cookie from a direct video-page response.
         // Establish the same anonymous web session before requesting signed media URLs.
         try { openSession(cookies, trace); } catch (Exception ignored) { /* The video page may still work. */ }
-        JSONObject item = itemFromPage(fetchText(pageUrl, null, DESKTOP, cookies, trace), "webapp.video-detail");
+        String directUrl = directPostUrl(shareUrl, videoId);
+        JSONObject item;
+        try {
+            item = itemFromPage(fetchText(directUrl, null, DESKTOP, cookies, trace), "webapp.video-detail");
+        } catch (Exception first) {
+            if (!isTransportFailure(first)) throw first;
+            trace(trace, "resolver.retry", "firstHost=" + new URL(directUrl).getHost() +
+                " reason=" + DiagnosticsFormat.describe(first));
+            item = itemFromPage(fetchText(pageUrl, null, DESKTOP, cookies, trace), "webapp.video-detail");
+        }
         if (!videoId.equals(item.optString("id", ""))) throw new Exception("TikTok returned a different video");
         JSONObject author = item.optJSONObject("author");
         String accountId = author == null ? "" : author.optString("id", "");
@@ -331,11 +342,12 @@ public final class StreamResolver {
     }
 
     private static void openSession(CookieManager cookies, Trace trace) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL("https://www.tiktok.com/").openConnection();
+        HttpURLConnection connection = NetworkRouteStore.open(new URL("https://www.tiktok.com/"));
         long started = System.nanoTime();
+        HttpDeadline deadline = new HttpDeadline(connection, 8);
         try {
-            connection.setConnectTimeout(10000);
-            connection.setReadTimeout(10000);
+            connection.setConnectTimeout(6000);
+            connection.setReadTimeout(6000);
             connection.setRequestProperty("User-Agent", USER_AGENT);
             MediaRequestCookies.attach(connection, cookies, true);
             int status = connection.getResponseCode();
@@ -344,10 +356,44 @@ public final class StreamResolver {
                 " http=" + status + " elapsedMs=" + (System.nanoTime() - started) / 1_000_000 +
                 " cookieCount=" + cookies.getCookieStore().getCookies().size());
         } catch (Exception error) {
+            error = deadline.translate(error);
             trace(trace, "resolver.visitor_page", "host=www.tiktok.com elapsedMs=" +
                 (System.nanoTime() - started) / 1_000_000 + " error=" + DiagnosticsFormat.describe(error));
             throw error;
-        } finally { connection.disconnect(); }
+        } finally { deadline.close(); connection.disconnect(); }
+    }
+
+    private static String directPostUrl(String shareUrl, String videoId) {
+        try {
+            URL parsed = new URL(shareUrl);
+            if (!parsed.getHost().endsWith(".tiktok.com")) return "https://www.tiktok.com/@_/video/" + videoId;
+            String path = parsed.getPath();
+            return VIDEO_ID.matcher(path).find() ? "https://www.tiktok.com" + path :
+                "https://www.tiktok.com/@_/video/" + videoId;
+        } catch (Exception ignored) { return "https://www.tiktok.com/@_/video/" + videoId; }
+    }
+
+    private static boolean isTransportFailure(Exception error) {
+        return error instanceof SocketTimeoutException || error instanceof SocketException;
+    }
+
+    private static String fetchTextWithRetry(String url, StringBuilder resolvedUrl,
+                                             BrowserProfile profile, CookieManager cookies, Trace trace) throws Exception {
+        StringBuilder firstUrl = resolvedUrl == null ? null : new StringBuilder();
+        try {
+            String page = fetchText(url, firstUrl, profile, cookies, trace);
+            if (resolvedUrl != null) resolvedUrl.append(firstUrl);
+            return page;
+        }
+        catch (Exception first) {
+            if (!isTransportFailure(first)) throw first;
+            trace(trace, "resolver.retry", "host=" + new URL(url).getHost() +
+                " reason=" + DiagnosticsFormat.describe(first));
+            StringBuilder retryUrl = resolvedUrl == null ? null : new StringBuilder();
+            String page = fetchText(url, retryUrl, profile, cookies, trace);
+            if (resolvedUrl != null) resolvedUrl.append(retryUrl);
+            return page;
+        }
     }
 
     private static String idFromUrl(String url) {
@@ -374,11 +420,12 @@ public final class StreamResolver {
 
     private static String fetchText(String url, StringBuilder resolvedUrl, BrowserProfile profile,
                                     CookieManager cookies, Trace trace) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection connection = NetworkRouteStore.open(new URL(url));
         long started = System.nanoTime();
+        HttpDeadline deadline = new HttpDeadline(connection, profile == DESKTOP ? 20 : 15);
         try {
-            connection.setConnectTimeout(profile == DESKTOP ? 15000 : 10000);
-            connection.setReadTimeout(profile == DESKTOP ? 15000 : 10000);
+            connection.setConnectTimeout(profile == DESKTOP ? 10000 : 8000);
+            connection.setReadTimeout(profile == DESKTOP ? 10000 : 8000);
             connection.setInstanceFollowRedirects(true);
             connection.setRequestProperty("User-Agent", profile.userAgent);
             if (profile.wide) {
@@ -407,12 +454,13 @@ public final class StreamResolver {
                 return new String(out.toByteArray(), StandardCharsets.UTF_8);
             }
         } catch (Exception error) {
+            error = deadline.translate(error);
             trace(trace, "resolver.page", "host=" + connection.getURL().getHost() +
                 " profile=" + profileName(profile) +
                 " elapsedMs=" + (System.nanoTime() - started) / 1_000_000 +
                 " error=" + DiagnosticsFormat.describe(error));
             throw error;
-        } finally { connection.disconnect(); }
+        } finally { deadline.close(); connection.disconnect(); }
     }
 
     private static String profileName(BrowserProfile profile) {

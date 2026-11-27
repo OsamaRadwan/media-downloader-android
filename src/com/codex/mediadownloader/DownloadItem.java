@@ -14,18 +14,26 @@ final class DownloadItem {
     final String state, stage, profileName, accountId, videoId, shareUrl, fileName;
     final String thumbnailPath, savedUri, error, videoMime, audioMime;
     final String mediaType, sourceUrl, postTitle, caption, hashtags;
+    final boolean savedFilePresent;
     final List<PhotoItem> photos;
 
     static final class PhotoItem {
         final int index, width, height, sourceWidth, sourceHeight;
         final long bytes;
         final String fileName, savedUri, error, mime, thumbnailPath;
+        final boolean filePresent;
         PhotoItem(int index, int width, int height, int sourceWidth, int sourceHeight, long bytes, String fileName,
                   String savedUri, String error, String mime, String thumbnailPath) {
+            this(index, width, height, sourceWidth, sourceHeight, bytes, fileName, savedUri, error, mime,
+                thumbnailPath, !savedUri.isEmpty());
+        }
+        PhotoItem(int index, int width, int height, int sourceWidth, int sourceHeight, long bytes, String fileName,
+                  String savedUri, String error, String mime, String thumbnailPath, boolean filePresent) {
             this.index = index; this.width = width; this.height = height;
             this.sourceWidth = sourceWidth; this.sourceHeight = sourceHeight; this.bytes = bytes;
             this.fileName = fileName; this.savedUri = savedUri; this.error = error; this.mime = mime;
             this.thumbnailPath = thumbnailPath;
+            this.filePresent = filePresent;
         }
     }
 
@@ -46,6 +54,18 @@ final class DownloadItem {
                  String accountId, String videoId, String shareUrl, String fileName, String thumbnailPath, String savedUri,
                  String error, String videoMime, String audioMime, String mediaType, String sourceUrl,
                  String postTitle, String caption, String hashtags, List<PhotoItem> photos) {
+        this(id, createdAt, updatedAt, finishedAt, publishTimeSeconds, downloadedBytes, totalBytes,
+            speedBytesPerSecond, durationMs, width, height, streamOption, state, stage, profileName,
+            accountId, videoId, shareUrl, fileName, thumbnailPath, savedUri, error, videoMime, audioMime,
+            mediaType, sourceUrl, postTitle, caption, hashtags, photos, !savedUri.isEmpty());
+    }
+
+    DownloadItem(int id, long createdAt, long updatedAt, long finishedAt, long publishTimeSeconds,
+                 long downloadedBytes, long totalBytes, long speedBytesPerSecond, long durationMs,
+                 int width, int height, int streamOption, String state, String stage, String profileName,
+                 String accountId, String videoId, String shareUrl, String fileName, String thumbnailPath, String savedUri,
+                 String error, String videoMime, String audioMime, String mediaType, String sourceUrl,
+                 String postTitle, String caption, String hashtags, List<PhotoItem> photos, boolean savedFilePresent) {
         this.id = id;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
@@ -75,11 +95,20 @@ final class DownloadItem {
         this.postTitle = postTitle;
         this.caption = caption;
         this.hashtags = hashtags;
+        this.savedFilePresent = savedFilePresent;
         this.photos = Collections.unmodifiableList(new ArrayList<>(photos));
     }
 
     boolean isActive() {
         return !"complete".equals(state) && !"failed".equals(state) && !"partial".equals(state) && !"interrupted".equals(state);
+    }
+
+    boolean missingFile() {
+        if (!"complete".equals(state)) return false;
+        if (!"album".equals(mediaType)) return !savedFilePresent;
+        if (photos.isEmpty()) return true;
+        for (PhotoItem photo : photos) if (!photo.filePresent) return true;
+        return false;
     }
 
     String tiktokUrl() {

@@ -17,6 +17,7 @@ public final class ArchitectureBoundaryTest {
         DownloadsState state = new DownloadsController(fake).load();
         check(state.activeCount == 1 && state.completeCount == 1 && state.failedCount == 1,
             "Each status must have the correct count");
+        check(state.missingCount == 0, "Available completed files are not missing");
         records.clear();
         check(state.items.size() == 3, "UI snapshot must not change with repository list");
         try {
@@ -52,6 +53,11 @@ public final class ArchitectureBoundaryTest {
             "partial", "partial", "creator", "", "7706415465383365909", "", "", "", "", "", "", "",
             "album", "", "", "", "", java.util.Collections.emptyList());
         check(!album.isActive(), "A partial album is terminal until retried");
+        check(!album.missingFile(), "A partial album is already counted as failed");
+        DownloadItem missingVideo = new DownloadItem(10, 1, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0,
+            "complete", "Complete", "creator", "", "7706415465383365909", "", "", "", "",
+            "", "", "");
+        check(missingVideo.missingFile(), "A completed record without a file is missing");
         check(album.tiktokUrl().equals("https://www.tiktok.com/@creator/photo/7706415465383365909"),
             "Album link opens the matching photo post");
         check(PhotoQuality.better(2160, 3840, 100000, 1080, 1920, 200000),
@@ -71,7 +77,8 @@ public final class ArchitectureBoundaryTest {
 
     private static DownloadItem item(int id, String state, String videoId, String shareUrl) {
         return new DownloadItem(id, 1, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0,
-            state, state, "creator", "", videoId, shareUrl, "", "", "", "", "", "");
+            state, state, "creator", "", videoId, shareUrl, "", "",
+            "complete".equals(state) ? "content://media/external/downloads/42" : "", "", "", "");
     }
 
     private static void check(boolean condition, String message) {

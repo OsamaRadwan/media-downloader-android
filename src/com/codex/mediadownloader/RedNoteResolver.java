@@ -200,8 +200,16 @@ final class RedNoteResolver {
     private static String fetch(String link, StreamResolver.Trace trace) throws Exception {
         URL current = new URL(link);
         for (int redirect = 0; redirect < 5; redirect++) {
-            if (!accepts(current.toString())) throw new Exception("RedNote redirected to an unexpected host");
-            HttpURLConnection connection = (HttpURLConnection) current.openConnection();
+            if (!accepts(current.toString())) {
+                String[] segments = current.getPath().split("/");
+                String pathKind = segments.length > 1 ? segments[1] : "root";
+                if (pathKind.matches("[0-9]+")) pathKind = "numeric-" + pathKind.length();
+                else if (pathKind.matches("[a-fA-F0-9]+")) pathKind = "hex-" + pathKind.length();
+                else if (!pathKind.matches("[A-Za-z_-]{1,32}")) pathKind = "other-" + pathKind.length();
+                throw new Exception("RedNote redirect unsupported at host " + current.getHost() +
+                    " path kind " + pathKind + " segments " + Math.max(0, segments.length - 1));
+            }
+            HttpURLConnection connection = NetworkRouteStore.open(current);
             try {
                 connection.setInstanceFollowRedirects(false);
                 connection.setConnectTimeout(15000);

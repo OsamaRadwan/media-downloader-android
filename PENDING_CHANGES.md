@@ -19,7 +19,6 @@ This file contains only open implementation or verification work. Delete every l
 
 ## Shared app behavior
 
-- [ ] Add immediate visual confirmation when the floating download button is tapped. Verify on a phone that the effect is visible before link capture completes, including with transparent and custom icons, without changing the short-tap download or long-press behavior.
 - [ ] Test a real user-supplied IKEv2 VPN profile through provision, Android consent, connect, route check, disconnect, and restoration of the previous VPN. Configuration UI and proxy transfers were tested, but no tunnel was established.
 - [ ] Resolve or explicitly re-scope Arab Bank compatibility while the floating button's Accessibility service remains enabled. Package-scoped events and work-profile isolation were tested and did not remove the bank's warning; do not claim the current app can override the bank's device-wide check.
 - [ ] When the feature bundle is tested, run the full app matrix, prepare one consolidated release note and signed APK, then publish a single release and verify the download page. The local v1.80 code has not been committed or released.

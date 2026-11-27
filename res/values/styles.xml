@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="MediaDownloaderTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:colorAccent">@color/app_accent</item>
+        <item name="android:colorControlActivated">@color/app_accent</item>
+        <item name="android:colorButtonNormal">@color/app_card</item>
+        <item name="android:windowBackground">@color/app_page</item>
+        <item name="android:statusBarColor">@color/app_page</item>
+        <item name="android:navigationBarColor">@color/app_page</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:alertDialogTheme">@style/MediaDownloaderDialogTheme</item>
+    </style>
+    <style name="MediaDownloaderDialogTheme" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/dialog_background</item>
+        <item name="android:colorAccent">@color/app_accent</item>
+    </style>
+</resources>

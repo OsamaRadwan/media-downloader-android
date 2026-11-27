@@ -10,7 +10,7 @@ The descriptions include the locally installed v1.80 development build. The late
 - In its visibility checks, the service uses unrelated apps' window-change package names to hide the button and avoids walking their screen content. Android's Accessibility grant remains device-wide; this does not make the service invisible to apps that check whether it is enabled.
 - A small, transparent download arrow sits on the chosen screen side. It uses an application overlay below Android's system controls, including the volume panel. The overlay stays attached while a system control is shown when Android permits it.
 - A short tap starts a download for the **currently displayed** video or photo album. The source integration obtains a fresh link at tap time instead of reusing a link from an earlier post. The source app stays in the foreground while the transfer continues.
-- **Planned: visible tap feedback.** The floating download button should show an immediate pressed effect, such as a brief ripple or highlight, so the user can tell their tap registered before link capture or downloading finishes. The effect confirms the tap, not a successful download.
+- The floating download button briefly shrinks and dims as soon as it is pressed, then returns to its configured appearance. This works with built-in and imported transparent icons and confirms the tap before link capture finishes; it does not imply a successful download.
 - A long press opens Media Downloader on the Downloads page without starting a transfer.
 - The app has a generic name, adaptive launcher icon with a themed monochrome version, launcher entry, and Android package so its identity is not tied to one source application.
 

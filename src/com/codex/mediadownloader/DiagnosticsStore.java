@@ -111,6 +111,8 @@ final class DiagnosticsStore {
             writer.write("Instagram version: " + sourceAppVersion(context, "com.instagram.android") + "\n");
             writer.write("Display: " + displayStatus(context) + "\n");
             writer.write("Network: " + networkStatus(context) + "\n");
+            writer.write("Download route: " + DiagnosticsFormat.clean(NetworkRouteStore.load(context).label()) + "\n");
+            writer.write("App VPN: " + DiagnosticsFormat.clean(PlatformVpn.status(context)) + "\n");
             writer.write("Private storage available: " + storageStatus(context) + "\n");
             writer.write("Overlay permission: " + overlayStatus(context) + "\n");
             writer.write("Accessibility service: " + accessibilityStatus(context) + "\n");

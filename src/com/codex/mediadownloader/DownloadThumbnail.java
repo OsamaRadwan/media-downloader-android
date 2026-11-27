@@ -53,7 +53,7 @@ final class DownloadThumbnail {
         new Thread(() -> {
             HttpURLConnection connection = null;
             try {
-                connection = (HttpURLConnection) new URL(coverUrl).openConnection();
+                connection = NetworkRouteStore.open(new URL(coverUrl));
                 connection.setConnectTimeout(5000);
                 connection.setReadTimeout(5000);
                 connection.setRequestProperty("User-Agent", StreamResolver.USER_AGENT);

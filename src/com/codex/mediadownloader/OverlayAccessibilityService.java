@@ -20,6 +20,7 @@ import java.util.regex.Pattern;
 import android.view.Gravity;
 import android.view.Display;
 import android.view.View;
+import android.view.MotionEvent;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -36,6 +37,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private static final String TIKTOK = "com.zhiliaoapp.musically";
     private static final String INSTAGRAM = "com.instagram.android";
     private static final String REDNOTE = "com.xingin.xhs";
+    private static final String SYSTEM_UI = "com.android.systemui";
     private final Handler handler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
     private WindowManager.LayoutParams overlayParams;
@@ -75,9 +77,33 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             type != AccessibilityEvent.TYPE_WINDOWS_CHANGED &&
             type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && type != AccessibilityEvent.TYPE_VIEW_SCROLLED) return;
+        if (event.getPackageName() == null) {
+            if (!collecting) scheduleVisibilityCheck(0);
+            return;
+        }
+        String eventPackage = String.valueOf(event.getPackageName());
+        if (!isSourcePackage(eventPackage) && !getPackageName().equals(eventPackage)) {
+            if (!SYSTEM_UI.equals(eventPackage) && type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                handler.removeCallbacks(visibilityCheck);
+                visibilityCheckQueued = false;
+                visibilityCheckImmediate = false;
+                if (collecting) {
+                    storyBatch = null;
+                    releaseOverlayFocus();
+                    collecting = false;
+                    landscapeCapture = false;
+                }
+                hideOverlay();
+            }
+            return;
+        }
         if (collecting) return;
         scheduleVisibilityCheck(type == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
             type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ? 0 : 50);
+    }
+
+    private static boolean isSourcePackage(String name) {
+        return TIKTOK.equals(name) || INSTAGRAM.equals(name) || REDNOTE.equals(name);
     }
 
     @Override public void onInterrupt() { }
@@ -109,6 +135,13 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     private void syncVisibility() {
         if (collecting) return;
         AccessibilityNodeInfo activeRoot = getRootInActiveWindow();
+        if (activeRoot == null || activeRoot.getPackageName() == null) return;
+        String activePackage = activeRoot.getPackageName().toString();
+        if (SYSTEM_UI.equals(activePackage)) return;
+        if (!isSourcePackage(activePackage) && !getPackageName().equals(activePackage)) {
+            hideOverlay();
+            return;
+        }
         if (activeRoot != null && activeRoot.getPackageName() != null &&
             getPackageName().contentEquals(activeRoot.getPackageName()) && !isOverlayWindow(activeRoot)) {
             hideOverlay();
@@ -189,6 +222,18 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         ImageView icon = new ImageView(this);
         OverlaySettings.style(icon, this, settings, customIcons);
         icon.setContentDescription("Download current post. Long press to open Media Downloader");
+        icon.setOnTouchListener((button, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                button.animate().cancel();
+                button.setScaleX(0.78f);
+                button.setScaleY(0.78f);
+                button.setAlpha(0.45f);
+            } else if (event.getActionMasked() == MotionEvent.ACTION_UP ||
+                       event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                button.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(300).start();
+            }
+            return false;
+        });
         icon.setOnClickListener(this);
         icon.setOnLongClickListener(view -> {
             Intent open = new Intent(this, MainActivity.class);
@@ -281,7 +326,10 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     @Override public void onClick(View view) {
         if (collecting) return;
         AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root != null && root.getPackageName() != null && getPackageName().contentEquals(root.getPackageName())) return;
+        if (root == null || !isSourcePackage(String.valueOf(root.getPackageName()))) {
+            hideOverlay();
+            return;
+        }
         Log.d("MediaDownloader", "Overlay tapped; source=" + sourceApp +
             " active=" + (root == null ? "none" : root.getPackageName()));
         DiagnosticsStore.trace(this, "overlay.tap", "source=" +
@@ -421,6 +469,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     }
 
     private void clickCopyWhenReady(String app, long deadline) {
+        if (!collecting) return;
         AccessibilityNodeInfo copy = findActionInWindows("Copy link");
         if (copy == null && REDNOTE.equals(app)) copy = find(getRootInActiveWindow(), "Copy link");
         long copyStartedAt = System.currentTimeMillis();
@@ -460,10 +509,12 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     }
 
     private void startClipboardRead(String app, long copyStartedAt) {
+        if (!collecting) return;
         Log.d("MediaDownloader", "Awaiting fresh clipboard link");
         DiagnosticsStore.trace(this, "overlay.copy_link", "Copy link control activated");
         handler.postDelayed(() -> {
                 try {
+                    if (!collecting) return;
                     if (overlay == null || overlayParams == null) throw new Exception("Download button disappeared");
                     overlayParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
                     windowManager.updateViewLayout(overlay, overlayParams);
@@ -475,6 +526,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     }
 
     private void readFreshLink(String app, long copyStartedAt, long deadline) {
+        if (!collecting) return;
         try {
             if (overlay == null || overlayParams == null) throw new Exception("Download button disappeared");
             if (!overlay.hasWindowFocus()) overlay.requestFocus();
@@ -531,6 +583,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     }
 
     private void failCollecting(Exception error) {
+        if (!collecting) return;
         DiagnosticsStore.record(this, "overlay.start_download", error);
         Log.e("MediaDownloader", "Could not start download", error);
         if (storyBatch != null) {
@@ -575,6 +628,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             @Override public void onSuccess(ScreenshotResult result) {
                 HardwareBuffer buffer = result.getHardwareBuffer();
                 try {
+                    if (!collecting || storyBatch != null) return;
                     Bitmap hardware = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
                     if (hardware == null) throw new Exception("Story screenshot is unavailable");
                     Bitmap pixels = hardware.copy(Bitmap.Config.ARGB_8888, false);
@@ -709,6 +763,7 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         storyDirectionCaptures = 0;
         Log.i("MediaDownloader", "Story scan switching to backward pass");
         handler.postDelayed(() -> {
+            if (storyBatch == null) return;
             AccessibilityNodeInfo root = getRootInActiveWindow();
             AccessibilityNodeInfo title = findNodeById(root, ":id/title");
             String account = title == null || title.getText() == null ? "" : title.getText().toString();

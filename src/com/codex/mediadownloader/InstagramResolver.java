@@ -275,7 +275,7 @@ final class InstagramResolver {
 
     private static String fetchStoryData(String account, String referer, StreamResolver.Trace trace) throws Exception {
         String url = "https://www.instagram.com/api/v1/feed/reels_media/?reel_ids=" + account;
-        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection connection = NetworkRouteStore.open(new URL(url));
         try {
             connection.setConnectTimeout(15000);
             connection.setReadTimeout(20000);
@@ -499,7 +499,7 @@ final class InstagramResolver {
 
     private static String fetchPage(String url, String agent, StreamResolver.Trace trace,
             boolean modern) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection connection = NetworkRouteStore.open(new URL(url));
         try {
             connection.setConnectTimeout(15000);
             connection.setReadTimeout(20000);

@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="launcher_background">#102330</color>
+    <color name="launcher_background">#0A1020</color>
+    <color name="app_page">#0A1020</color>
+    <color name="app_card">#182338</color>
+    <color name="app_text">#EDF3FF</color>
+    <color name="app_muted">#ADbbD3</color>
+    <color name="app_accent">#91BAFF</color>
 </resources>
