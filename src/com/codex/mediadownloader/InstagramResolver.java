@@ -446,8 +446,9 @@ final class InstagramResolver {
         JSONObject sidecar = media.optJSONObject("edge_sidecar_to_children");
         JSONArray edges = sidecar == null ? null : sidecar.optJSONArray("edges");
         if (edges != null) {
-            if (edges.length() == 0 || edges.length() > 100)
-                throw new Exception("Instagram album has an invalid number of items");
+            JSONObject pageInfo = sidecar.optJSONObject("page_info");
+            InstagramAlbumPage.requireComplete(edges.length(), sidecar.optInt("count", -1),
+                pageInfo != null && pageInfo.optBoolean("has_next_page"));
             Set<String> childIds = new LinkedHashSet<>();
             for (int i = 0; i < edges.length(); i++) {
                 JSONObject edge = edges.optJSONObject(i);
