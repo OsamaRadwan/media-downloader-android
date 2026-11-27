@@ -398,13 +398,13 @@ public class DownloadService extends Service {
         try {
             MediaMux.Tracks tracks = null;
             Set<String> tried = new HashSet<>();
-            Set<String> videoOnlyVariants = new HashSet<>();
             int option = 0;
             int accessDenied = 0;
             int noAudio = 0;
             String lastError = null;
             for (StreamResolver.Candidate candidate : candidates) {
-                if (videoOnlyVariants.contains(candidate.variant) || !tried.add(candidate.url)) continue;
+                // Distinct URLs can share a variant label yet contain different audio tracks.
+                if (!tried.add(candidate.url)) continue;
                 option++;
                 try {
                     entry.streamOption = option;
@@ -460,12 +460,7 @@ public class DownloadService extends Service {
                     DownloadStore.save(this, entry, false);
                     notifications.notify(jobId, detailNotice(jobId, title, fileName, "Checking video and audio", candidate.width,
                         candidate.height, video.length(), video.length(), null));
-                    try {
-                        tracks = MediaMux.inspectMuxed(video);
-                    } catch (Exception invalidTracks) {
-                        videoOnlyVariants.add(candidate.variant);
-                        throw invalidTracks;
-                    }
+                    tracks = MediaMux.inspectMuxed(video);
                     Log.i("MediaDownloader", "Selected muxed stream option=" + option +
                         " listed=" + candidate.width + "x" + candidate.height +
                         " actual=" + tracks.width + "x" + tracks.height +
