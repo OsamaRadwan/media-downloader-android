@@ -52,6 +52,15 @@ public final class PhotoRenditionTest {
             !PhotoQuality.matchesListed(1500, 1500, 1080, 1350) &&
             !PhotoQuality.matchesListed(1500, 1500, 0, 0),
             "Downloads resolution label must use eligible aspect and total pixels");
+        String redNoteAsset = "notes_pre_post/0123456789abcdef0123456789abcdef01234567";
+        check(RedNotePhotoPath.valid(redNoteAsset) &&
+            RedNotePhotoPath.originalUrl(redNoteAsset).equals(
+                "https://sns-img-hw.xhscdn.com/" + redNoteAsset) &&
+            RedNotePhotoPath.valid("0123456789abcdef0123456789abcdef") &&
+            !RedNotePhotoPath.valid("notes_pre_post/../outside") &&
+            !RedNotePhotoPath.valid(redNoteAsset + "?token=secret") &&
+            !RedNotePhotoPath.valid("notes_pre_post/short"),
+            "RedNote original paths must admit observed assets without unsafe suffixes");
         String imagePath = "/tos-useast5-i-photomode-tx/f7cf550d212e450e8db0190589ba292e";
         String firstId = StreamResolver.photoSourceId(Arrays.asList(
             "https://p19-sign.tiktokcdn-us.com" + imagePath + "~tplv-photomode-image.jpeg?x-signature=secret-a",

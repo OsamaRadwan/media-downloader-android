@@ -175,9 +175,8 @@ final class RedNoteResolver {
                 if (image == null) throw new Exception("RedNote album image is missing");
                 Set<String> urls = new LinkedHashSet<>();
                 String fileId = image.optString("fileId", "");
-                boolean validFileId = fileId.matches("[A-Za-z0-9]{20,80}");
-                if (validFileId)
-                    urls.add("https://sns-img-hw.xhscdn.com/" + fileId);
+                boolean validFileId = RedNotePhotoPath.valid(fileId);
+                if (validFileId) urls.add(RedNotePhotoPath.originalUrl(fileId));
                 String main = secure(image.optString("url", ""));
                 if (isMedia(main)) urls.add(main);
                 JSONArray info = image.optJSONArray("infoList");

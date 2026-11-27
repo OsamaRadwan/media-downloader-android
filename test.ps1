@@ -20,6 +20,7 @@ $sources = @(
     'src\com\codex\mediadownloader\Mp4SourceMetadata.java',
     'src\com\codex\mediadownloader\SourcePostUrl.java',
     'src\com\codex\mediadownloader\RedNoteVideoPolicy.java',
+    'src\com\codex\mediadownloader\RedNotePhotoPath.java',
     'src\com\codex\mediadownloader\PostText.java',
     'src\com\codex\mediadownloader\PhotoQuality.java',
     'src\com\codex\mediadownloader\VideoQuality.java',
