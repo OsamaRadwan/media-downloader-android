@@ -4,6 +4,8 @@ This log distinguishes code installed locally from GitHub releases. It summarize
 
 ## Local development bundle after v1.68 — not yet published
 
+- **RedNote public album quality matrix (offline):** Two public albums resolved anonymously with 9 and 10 ordered photos. All nine original JPEGs in the first decoded at the listed 3000×4000. All ten original HEIC primary images in the second decoded at their individually listed sizes, roughly 2033–2131 pixels wide and 3149–3286 high; their JPEG previews were 1080 pixels wide. Both albums' distinct photo file IDs stayed in the same order across two fresh resolver responses. The Java suite and signed build passed. Android transfer, embedded metadata, partial retry, and crop rejection remain untested; no app code or release changed.
+
 - **RedNote public album identity check (offline):** A reachable public nine-photo short link resolved twice without an account session. The production resolver returned the same post ID and nine distinct photo file IDs in the same order. This supports the per-photo retry identity guard for that source, but no changed-order source, partial retry, or phone save was tested. `test.ps1` and `build.ps1` passed; no app code or release changed.
 
 - **RedNote album source audit (offline):** A saved three-photo public page retains three distinct file IDs, but fresh direct URLs for that exact note all redirect to an unsupported numeric route without post data. The production resolver rejected the redirects; that note's cross-response ID stability and on-phone retry remain pending. No app code or release changed in this audit.
