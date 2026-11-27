@@ -104,7 +104,8 @@ final class AlbumTransfer {
                         Selection selection = selectBest(context, result, entry, candidate, progress, firstFile, secondFile);
                         PhotoFile image = selection.image;
                         File selected = selection.file;
-                        if ("image/jpeg".equals(image.mime)) tagJpeg(context, selected, result);
+                        if ("image/jpeg".equals(image.mime))
+                            tagJpeg(context, selected, result, entry.sourceUrl);
                         String name = fileName(result, item.index, image.extension);
                         Saved saved = save(context, selected, name, image.mime);
                         photo.fileName = saved.name;
@@ -291,13 +292,14 @@ final class AlbumTransfer {
         } finally { connection.disconnect(); }
     }
 
-    private static void tagJpeg(Context context, File file, StreamResolver.Result result) {
+    private static void tagJpeg(Context context, File file, StreamResolver.Result result,
+                                String sourceUrl) {
         try {
             ExifInterface exif = new ExifInterface(file);
             String description = result.postText.description;
             if (!description.isEmpty()) exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, description);
             exif.setAttribute(ExifInterface.TAG_ARTIST, result.profileName);
-            exif.setAttribute(ExifInterface.TAG_USER_COMMENT, SourcePostUrl.forMetadata(result.pageUrl) +
+            exif.setAttribute(ExifInterface.TAG_USER_COMMENT, SourcePostUrl.forMetadata(sourceUrl) +
                 (result.postText.title.isEmpty() ? "" : "\n" + result.postText.title) +
                 (result.postText.hashtags.isEmpty() ? "" : "\n" + result.postText.hashtags));
             exif.saveAttributes();

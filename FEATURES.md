@@ -46,7 +46,7 @@ The descriptions include the locally installed v1.80 development build and later
 ## File names and embedded metadata
 
 - New files use `<profile-name>_profile_<account-id>_VideoID_<video-id>_<yyyy-MM-dd_hh-mm>.mp4`. The timestamp comes from the post's publication time; the separator uses a hyphen in place of a filename-invalid colon.
-- Each new MP4 embeds a validated public source-post permalink in Comment, an available title in Title, the full caption or post text in Description, and hashtags in Keywords. The permalink contains only the supported post path: all share query parameters and fragments, including account or session tokens, are removed before saving. This applies to TikTok, Instagram (posts, Reels, and Stories), and RedNote. Unsupported or malformed source links are rejected before file metadata is written. Missing source fields remain absent rather than being invented.
+- Each new MP4 embeds a validated public source-post permalink in Comment, an available title in Title, the full caption or post text in Description, and hashtags in Keywords. The permalink contains only the supported post path: all share query parameters and fragments, including account or session tokens, are removed before saving. TikTok new downloads use the resolved creator handle in this saved link, while anonymous page requests can still use `@_`. This applies to TikTok, Instagram (posts, Reels, and Stories), and RedNote. Unsupported or malformed source links are rejected before file metadata is written. Missing source fields remain absent rather than being invented.
 - The app verifies that metadata writing did not remove or alter the video and audio tracks before publishing the file.
 
 ## Downloads page and notifications

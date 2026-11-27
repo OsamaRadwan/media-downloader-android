@@ -50,6 +50,27 @@ public final class Mp4SourceMetadataTest {
                 check(!new String(Files.readAllBytes(sample.toPath()), "ISO-8859-1").contains(SECRET),
                     "MP4 must not include a share token in any bytes");
             }
+            String anonymous = "https://www.tiktok.com/@_/video/7708810139658128647";
+            check(SourcePostUrl.forResolved("tiktok", "creator", "7708810139658128647", anonymous)
+                .equals(URL), "TikTok metadata uses the resolved creator permalink");
+            check(SourcePostUrl.forResolved("tiktok", "creator", "7708810139658128647",
+                anonymous + "?share_token=" + SECRET).equals(URL),
+                "Resolved TikTok metadata omits share parameters");
+            check(SourcePostUrl.forResolved("tiktok", "creator", "7708810139658128647",
+                "https://www.tiktok.com/@_/photo/7708810139658128647")
+                .equals("https://www.tiktok.com/@creator/photo/7708810139658128647"),
+                "TikTok photo metadata uses the resolved creator permalink");
+            check(SourcePostUrl.forResolved("instagram", "nasa", "ignored", INSTAGRAM_URL)
+                .equals(INSTAGRAM_URL), "Other platforms retain their public post link");
+            try {
+                SourcePostUrl.forResolved("tiktok", "creator", "7708810139658128647",
+                    "https://www.tiktok.com/@_/video/7708810139658128648");
+                throw new AssertionError("A different TikTok post ID was accepted");
+            } catch (java.io.IOException expected) { }
+            try {
+                SourcePostUrl.forResolved("tiktok", "other/path", "7708810139658128647", anonymous);
+                throw new AssertionError("An unsafe TikTok creator handle was accepted");
+            } catch (java.io.IOException expected) { }
             check(SourcePostUrl.forMetadata("https://xiaohongshu.com/explore/6AE306F60000000007038CBF?x=" + SECRET)
                 .equals(REDNOTE_URL), "RedNote alternate public path must normalize");
             String[] rejected = {"https://instagram.com.evil.example/p/Df0DoVpmTBI/?x=" + SECRET,

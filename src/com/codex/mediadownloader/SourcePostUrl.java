@@ -9,6 +9,18 @@ import java.util.Locale;
 final class SourcePostUrl {
     private SourcePostUrl() { }
 
+    /** The anonymous lookup URL is separate from the permalink saved with a resolved post. */
+    static String forResolved(String platform, String profileName, String videoId, String pageUrl)
+        throws IOException {
+        String cleanPage = forMetadata(pageUrl);
+        if (!"tiktok".equals(platform)) return cleanPage;
+        if (profileName == null || !profileName.matches("[A-Za-z0-9._-]+") ||
+            videoId == null || !videoId.matches("[0-9]{15,22}") ||
+            !cleanPage.endsWith("/" + videoId)) throw new IOException("Invalid resolved TikTok post");
+        String kind = cleanPage.contains("/photo/") ? "photo" : "video";
+        return forMetadata("https://www.tiktok.com/@" + profileName + "/" + kind + "/" + videoId);
+    }
+
     static String forMetadata(String value) throws IOException {
         if (value == null) throw new IOException("Invalid source post URL");
         try {

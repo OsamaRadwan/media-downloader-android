@@ -194,7 +194,8 @@ public class DownloadService extends Service {
                     duplicate = findDuplicate(shareUrl, resolvedKey, jobId);
                     if (duplicate == null) {
                         entry.videoId = result.videoId;
-                        entry.sourceUrl = SourcePostUrl.forMetadata(result.pageUrl);
+                        entry.sourceUrl = SourcePostUrl.forResolved(result.platform,
+                            result.profileName, result.videoId, result.pageUrl);
                         DownloadStore.save(this, entry, true);
                     }
                 }
@@ -224,7 +225,10 @@ public class DownloadService extends Service {
             entry.accountId = result.accountId;
             entry.videoId = result.videoId;
             entry.publishTimeSeconds = result.publishTimeSeconds;
-            entry.sourceUrl = SourcePostUrl.forMetadata(result.pageUrl);
+            if (!retry || entry.sourceUrl.isEmpty())
+                entry.sourceUrl = SourcePostUrl.forResolved(result.platform,
+                    result.profileName, result.videoId, result.pageUrl);
+            else entry.sourceUrl = SourcePostUrl.forMetadata(entry.sourceUrl);
             entry.postTitle = result.postText.title;
             entry.caption = result.postText.description;
             entry.hashtags = result.postText.hashtags;
@@ -536,7 +540,7 @@ public class DownloadService extends Service {
             DownloadStore.save(this, entry, false);
             notifications.notify(jobId, detailNotice(jobId, title, fileName, entry.stage, tracks.width,
                 tracks.height, video.length(), video.length(), tracks));
-            Mp4SourceMetadata.write(video, result.pageUrl, result.postText);
+            Mp4SourceMetadata.write(video, entry.sourceUrl, result.postText);
             MediaMux.Tracks taggedTracks = MediaMux.inspectMuxed(video);
             if (taggedTracks.width != tracks.width || taggedTracks.height != tracks.height ||
                 !taggedTracks.videoMime.equals(tracks.videoMime) || !taggedTracks.audioMime.equals(tracks.audioMime))
