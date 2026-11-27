@@ -4,6 +4,8 @@ This log distinguishes code installed locally from GitHub releases. It summarize
 
 ## Local development bundle after v1.68 — not yet published
 
+- **Instagram standalone video variants (offline only):** Legacy public embeds now supply every listed `video_resources` candidate as well as the primary `video_url` to the shared transfer, ranked by listed dimensions and deduplicated by URL. The existing MP4 video/audio-sample check still determines what can be saved. A synthetic two-variant parser probe, a real one-variant child embed, the Java suite, and the signed build passed. No phone transfer was run; the tested mixed carousel still exposed only silent files.
+
 - **TikTok album retry identity (offline only):** Recognizable photo-mode CDN asset paths now become hashed per-photo IDs in new album records. Signed query parameters, mirror hosts, and rendition templates are excluded. The shared retry guard rejects a changed asset at the same index; unknown paths and old records retain the prior check. Java tests and a signed build passed. The source example was a public historical response, and a fresh TikTok page could not be fetched from this computer, so live stability and phone retry remain unverified.
 
 - **RedNote album retry identity (offline only):** Public image file IDs are now carried into new RedNote album rows and checked by the existing shared item guard before retry transfer. A saved public three-photo page produced three distinct IDs, and a simulated same-type swap was rejected. The Java suite and signed build passed; no phone, fresh source response, or actual RedNote retry was exercised.

@@ -371,10 +371,7 @@ final class InstagramResolver {
                 }
             }
         } else if (media.optBoolean("is_video")) {
-            String url = media.optString("video_url", "");
-            if (!https(url)) throw new Exception("Instagram did not provide a public video stream");
-            // The post image dimensions need not match the video track; MediaMux inspects the actual file.
-            videos.add(new StreamResolver.Candidate(url, 0, 0, 0, "instagram-public"));
+            videos.addAll(videoCandidates(media, 0));
         } else {
             photos.add(photo(media, 1));
         }
@@ -388,6 +385,7 @@ final class InstagramResolver {
     private static List<StreamResolver.Candidate> videoCandidates(JSONObject item, int index) throws Exception {
         List<StreamResolver.Candidate> variants = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
+        String label = index < 1 ? "instagram-post" : "instagram-album-" + index;
         JSONArray resources = item.optJSONArray("video_resources");
         if (resources != null) for (int i = 0; i < resources.length(); i++) {
             JSONObject resource = resources.optJSONObject(i);
@@ -396,7 +394,7 @@ final class InstagramResolver {
             if (https(url) && seen.add(url))
                 variants.add(new StreamResolver.Candidate(url,
                     resource.optInt("config_width", 0), resource.optInt("config_height", 0),
-                    0, "instagram-album-" + index + "-variant-" + i));
+                    0, label + "-variant-" + i));
         }
         String primary = item.optString("video_url", "");
         JSONObject dimensions = item.optJSONObject("dimensions");
@@ -404,8 +402,10 @@ final class InstagramResolver {
             variants.add(new StreamResolver.Candidate(primary,
                 dimensions == null ? 0 : dimensions.optInt("width", 0),
                 dimensions == null ? 0 : dimensions.optInt("height", 0), 0,
-                "instagram-album-" + index + "-primary"));
-        if (variants.isEmpty()) throw new Exception("Instagram did not provide a public video stream for item " + index);
+                label + "-primary"));
+        if (variants.isEmpty()) throw new Exception(index < 1 ?
+            "Instagram did not provide a public video stream" :
+            "Instagram did not provide a public video stream for item " + index);
         variants.sort((a, b) -> Long.compare((long) b.width * b.height, (long) a.width * a.height));
         return variants;
     }
