@@ -5,7 +5,6 @@ This file contains only open implementation or verification work. Delete every l
 ## TikTok
 
 - [ ] Verify a live **photo Story** from button tap through saved full-size photo, correct Story identity, filename, metadata, and Open photo. Seven video Stories were verified; a live photo Story was not available in that test.
-- [ ] Exercise missing-photo Redownload and document-picker relinking on a TikTok album after deleting or restoring one photo; verify that intact photos remain and filename plus actual byte size are enforced.
 
 ## Instagram
 
