@@ -2,6 +2,8 @@
 
 **Downloads:** [All versions and release notes](https://osamaradwan.github.io/media-downloader-android/) · [Latest APK](https://github.com/OsamaRadwan/media-downloader-android/releases/latest) · [Source repository](https://github.com/OsamaRadwan/media-downloader-android)
 
+**Development:** [Change requests and rules](DEVELOPMENT_GOAL.md) · [Pending changes](PENDING_CHANGES.md) · [Changelog](CHANGELOG.md)
+
 The project lives in `D:\Apps\MediaDownloader`. The Java source, tests, and Android application ID use `com.codex.mediadownloader`. TikTok, Instagram, and RedNote are supported sources. This package ID creates a separate Android installation from the earlier prototype; its private settings, download history, and Accessibility permission did not transfer automatically. Previously saved files remain in the phone's Downloads collection.
 
 An Android app that shows a configurable download arrow over TikTok, Instagram, and RedNote posts. Tap the floating arrow to download the current video or all photos in a public photo album; long press it to open Media Downloader's Downloads page. Its Accessibility service uses the current post's Share → Copy link controls and waits for a fresh clipboard result. A foreground service then downloads listed media directly to Downloads. For video, it requires one MP4 with both video and audio. Up to three download jobs can run at once.
