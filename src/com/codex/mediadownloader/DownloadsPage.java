@@ -348,6 +348,8 @@ final class DownloadsPage {
         int shownPhotoFingerprint;
         int shownAvailabilityFingerprint;
         long shownUpdatedAt;
+        DownloadItem displayedEntry;
+        boolean albumPhotosBuilt;
         boolean expanded;
 
         Row(int id) {
@@ -440,13 +442,24 @@ final class DownloadsPage {
                 toggle.setText(expanded ? "Hide details ▲" : "Show details ▼");
                 details.setVisibility(expanded ? View.VISIBLE : View.GONE);
                 albumPhotos.setVisibility(expanded ? View.VISIBLE : View.GONE);
+                if (expanded && displayedEntry != null) {
+                    shownUpdatedAt = -1;
+                    update(displayedEntry);
+                } else if (!expanded && albumPhotosBuilt) {
+                    albumPhotos.removeAllViews();
+                    albumPhotosBuilt = false;
+                }
             });
         }
 
         void update(DownloadItem entry) {
-            int availabilityFingerprint = entry.savedFilePresent ? 1 : 0;
+            displayedEntry = entry;
+            int availabilityFingerprint = 31 * (entry.savedFilePresent ? 1 : 0) +
+                (entry.thumbnailPath == null ? 0 : entry.thumbnailPath.hashCode());
             for (DownloadItem.PhotoItem photo : entry.photos)
-                availabilityFingerprint = 31 * availabilityFingerprint + (photo.filePresent ? 1 : 0);
+                availabilityFingerprint = 31 * availabilityFingerprint +
+                    31 * (photo.filePresent ? 1 : 0) +
+                    (photo.thumbnailPath == null ? 0 : photo.thumbnailPath.hashCode());
             if (shownUpdatedAt == entry.updatedAt &&
                 shownAvailabilityFingerprint == availabilityFingerprint && !entry.isActive()) return;
             shownUpdatedAt = entry.updatedAt;
@@ -551,19 +564,19 @@ final class DownloadsPage {
             open.setVisibility(canOpen ? View.VISIBLE : View.GONE);
             open.setText(availableVideo == null ? "Open video" : "Open video " + availableVideo.index);
             open.setOnClickListener(v -> openVideo(availableVideo == null ? entry.savedUri : availableVideo.savedUri));
-            DownloadItem.PhotoItem firstPhoto = null;
-            if (album && !entry.photos.isEmpty() && entry.photos.get(0).filePresent)
-                firstPhoto = entry.photos.get(0);
-            final DownloadItem.PhotoItem availablePreview = firstPhoto;
+            DownloadItem.PhotoItem firstAvailable = null;
+            if (album) for (DownloadItem.PhotoItem item : entry.photos)
+                if (item.filePresent) { firstAvailable = item; break; }
+            final DownloadItem.PhotoItem availablePreview = firstAvailable;
             thumbnail.setClickable(canOpen || availablePreview != null);
             thumbnail.setContentDescription(availablePreview != null ?
                 "Open downloaded " + availablePreview.kind :
                 canOpen ? "Play downloaded video" : null);
-            thumbnail.setOnClickListener(canOpen ? v -> openVideo(entry.savedUri) :
-                availablePreview != null ? v -> {
+            thumbnail.setOnClickListener(availablePreview != null ? v -> {
                     if ("video".equals(availablePreview.kind)) openVideo(availablePreview.savedUri);
                     else openPhoto(availablePreview.savedUri, availablePreview.mime);
-                } : null);
+                } : canOpen ? v -> openVideo(availableVideo == null ?
+                    entry.savedUri : availableVideo.savedUri) : null);
             boolean canRetry = DownloadRetry.allowed(entry.state, entry.mediaType, availablePhotos,
                 entry.photos.size(), entry.savedFilePresent, entry.shareUrl, entry.sourceUrl, entry.videoId);
             retryButton.setVisibility(canRetry ? View.VISIBLE : View.GONE);
@@ -589,10 +602,11 @@ final class DownloadsPage {
                 photoFingerprint = 31 * photoFingerprint +
                     (photo.savedUri + photo.error + photo.thumbnailPath + photo.filePresent +
                         photo.kind + photo.videoMime + photo.audioMime + photo.durationMs).hashCode();
-            if (shownPhotoFingerprint != photoFingerprint) {
+            if (album && expanded && (!albumPhotosBuilt || shownPhotoFingerprint != photoFingerprint)) {
                 shownPhotoFingerprint = photoFingerprint;
+                albumPhotosBuilt = true;
                 albumPhotos.removeAllViews();
-            if (album) for (DownloadItem.PhotoItem photo : entry.photos) {
+            for (DownloadItem.PhotoItem photo : entry.photos) {
                 LinearLayout photoRow = new LinearLayout(activity);
                 photoRow.setOrientation(LinearLayout.VERTICAL);
                 photoRow.setPadding(0, dp(8), 0, dp(8));
@@ -661,9 +675,14 @@ final class DownloadsPage {
                 }
             }
             }
+            if (!album && albumPhotosBuilt) {
+                albumPhotos.removeAllViews();
+                albumPhotosBuilt = false;
+            }
             albumPhotos.setVisibility(album && expanded ? View.VISIBLE : View.GONE);
-            String visibleThumbnail = album && !entry.photos.isEmpty() &&
-                !entry.photos.get(0).filePresent ? "" : entry.thumbnailPath;
+            String visibleThumbnail = album ? availablePreview == null ? "" :
+                !availablePreview.thumbnailPath.isEmpty() ? availablePreview.thumbnailPath :
+                    availablePreview.index == 1 ? entry.thumbnailPath : "" : entry.thumbnailPath;
             if (!visibleThumbnail.equals(shownThumbnail)) {
                 shownThumbnail = visibleThumbnail;
                 Bitmap image = visibleThumbnail.isEmpty() ? null : BitmapFactory.decodeFile(visibleThumbnail);
