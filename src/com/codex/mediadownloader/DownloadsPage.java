@@ -11,6 +11,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.text.Editable;
 import android.text.TextUtils;
@@ -18,23 +19,25 @@ import android.text.TextWatcher;
 import android.util.LruCache;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ListView;
 import android.widget.ProgressBar;
-import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -56,8 +59,8 @@ final class DownloadsPage {
     private static final int ERROR = AppPalette.ERROR;
     private final Activity activity;
     private final DownloadsController controller;
-    private final ScrollView scroll;
-    private final LinearLayout list;
+    private final ListView list;
+    private final BaseAdapter adapter;
     private final TextView summary;
     private final TextView empty;
     private final TextView resultCount;
@@ -68,10 +71,12 @@ final class DownloadsPage {
     private final Button previousPage;
     private final Button nextPage;
     private final EditText search;
-    private final Map<Integer, Row> rows = new HashMap<>();
+    private final Set<Integer> expandedIds = new HashSet<>();
+    private List<DownloadItem> visibleItems = Collections.emptyList();
     private int pageIndex;
     private int focusId;
     private boolean focused;
+    private boolean resetToTopPending;
     private boolean loading;
     private boolean refreshPending;
     private int pendingFileJobId;
@@ -81,13 +86,14 @@ final class DownloadsPage {
         this.activity = activity;
         this.controller = controller;
         this.focusId = focusId;
-        scroll = new ScrollView(activity);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(PAGE);
+        list = new ListView(activity);
+        list.setBackgroundColor(PAGE);
+        list.setDivider(new ColorDrawable(Color.TRANSPARENT));
+        list.setDividerHeight(dp(12));
+        list.setPadding(dp(20), dp(20), dp(20), dp(30));
+        list.setClipToPadding(false);
         LinearLayout page = new LinearLayout(activity);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setPadding(dp(20), dp(20), dp(20), dp(30));
-        scroll.addView(page);
         text(page, "Downloads", 27, TEXT, true, 0);
         text(page, "Downloads continue in the background. Tap a notification to return to its details.", 14, MUTED, false, 7);
         summary = text(page, "Loading downloads…", 14, ACCENT, true, 18);
@@ -141,7 +147,7 @@ final class DownloadsPage {
                 pageIndex = 0;
                 DownloadsPage.this.focusId = 0;
                 focused = false;
-                scroll.scrollTo(0, 0);
+                resetToTopPending = true;
                 refresh();
             }
             @Override public void afterTextChanged(Editable value) { }
@@ -154,23 +160,36 @@ final class DownloadsPage {
         topNextPage.setOnClickListener(v -> changePage(pageIndex + 1));
         topPaging.setVisibility(View.GONE);
         empty = text(page, "No downloads yet. Open a TikTok or Instagram post and tap the floating arrow.", 15, MUTED, false, 24);
-        list = new LinearLayout(activity);
-        list.setOrientation(LinearLayout.VERTICAL);
-        page.addView(list);
-        bottomPaging = pagingRow(page);
+        list.addHeaderView(page, null, false);
+        LinearLayout footer = new LinearLayout(activity);
+        footer.setOrientation(LinearLayout.VERTICAL);
+        bottomPaging = pagingRow(footer);
         previousPage = pageButton(bottomPaging, "Newer");
         nextPage = pageButton(bottomPaging, "Older");
         previousPage.setOnClickListener(v -> changePage(pageIndex - 1));
         nextPage.setOnClickListener(v -> changePage(pageIndex + 1));
         bottomPaging.setVisibility(View.GONE);
+        list.addFooterView(footer, null, false);
+        adapter = new BaseAdapter() {
+            @Override public int getCount() { return visibleItems.size(); }
+            @Override public DownloadItem getItem(int position) { return visibleItems.get(position); }
+            @Override public long getItemId(int position) { return visibleItems.get(position).id; }
+            @Override public boolean hasStableIds() { return true; }
+            @Override public View getView(int position, View convertView, ViewGroup parent) {
+                Row row = convertView == null ? new Row() : (Row) convertView.getTag();
+                row.bind(getItem(position));
+                return row.root;
+            }
+        };
+        list.setAdapter(adapter);
     }
 
-    View view() { return scroll; }
+    View view() { return list; }
 
     void focus(int id) {
         focusId = id;
         focused = false;
-        for (Row row : rows.values()) row.root.setBackground(cardBackground(row.id == focusId));
+        adapter.notifyDataSetChanged();
     }
 
     void refresh() {
@@ -229,32 +248,18 @@ final class DownloadsPage {
         previousPage.setVisibility(newer);
         topNextPage.setVisibility(older);
         nextPage.setVisibility(older);
-        Set<Integer> visible = new HashSet<>();
-        for (int i = 0; i < entries.size(); i++) {
-            DownloadItem entry = entries.get(i);
-            visible.add(entry.id);
-            Row row = rows.get(entry.id);
-            if (row == null) {
-                row = new Row(entry.id);
-                rows.put(entry.id, row);
-                list.addView(row.root, i, row.params);
-            } else if (list.getChildAt(i) != row.root) {
-                list.removeView(row.root);
-                list.addView(row.root, i, row.params);
-            }
-            row.update(entry);
-            if (focusId == entry.id && !focused) {
-                Row target = row;
-                scroll.post(() -> scroll.smoothScrollTo(0, list.getTop() + target.root.getTop()));
-                focused = true;
-            }
+        visibleItems = new ArrayList<>(entries);
+        adapter.notifyDataSetChanged();
+        if (resetToTopPending) {
+            resetToTopPending = false;
+            list.post(() -> list.setSelection(0));
         }
-        for (java.util.Iterator<Map.Entry<Integer, Row>> it = rows.entrySet().iterator(); it.hasNext();) {
-            Map.Entry<Integer, Row> entry = it.next();
-            if (!visible.contains(entry.getKey())) {
-                list.removeView(entry.getValue().root);
-                it.remove();
-            }
+        if (focusId > 0 && !focused) for (int i = 0; i < entries.size(); i++) {
+            if (entries.get(i).id != focusId) continue;
+            final int position = i + list.getHeaderViewsCount();
+            list.post(() -> list.smoothScrollToPosition(position));
+            focused = true;
+            break;
         }
     }
 
@@ -284,8 +289,8 @@ final class DownloadsPage {
         pageIndex = Math.max(0, requestedPage);
         focusId = 0;
         focused = false;
+        resetToTopPending = true;
         refresh();
-        scroll.post(() -> scroll.scrollTo(0, 0));
     }
 
     private void pasteSearch() {
@@ -333,9 +338,8 @@ final class DownloadsPage {
     }
 
     private final class Row {
-        final int id;
+        int id;
         final LinearLayout root;
-        final LinearLayout.LayoutParams params;
         final ImageView thumbnail;
         final TextView title;
         final TextView state;
@@ -359,15 +363,12 @@ final class DownloadsPage {
         boolean albumPhotosBuilt;
         boolean expanded;
 
-        Row(int id) {
-            this.id = id;
-            expanded = id == focusId;
+        Row() {
             root = new LinearLayout(activity);
+            root.setTag(this);
             root.setOrientation(LinearLayout.VERTICAL);
             root.setPadding(dp(14), dp(14), dp(14), dp(14));
-            root.setBackground(cardBackground(id == focusId));
-            params = new LinearLayout.LayoutParams(-1, -2);
-            params.topMargin = dp(12);
+            root.setBackground(cardBackground(false));
 
             LinearLayout top = new LinearLayout(activity);
             top.setOrientation(LinearLayout.HORIZONTAL);
@@ -446,6 +447,8 @@ final class DownloadsPage {
             tiktokLink.setContentDescription("Open this post in TikTok");
             toggle.setOnClickListener(v -> {
                 expanded = !expanded;
+                if (expanded) expandedIds.add(id);
+                else expandedIds.remove(id);
                 toggle.setText(expanded ? "Hide details ▲" : "Show details ▼");
                 details.setVisibility(expanded ? View.VISIBLE : View.GONE);
                 albumPhotos.setVisibility(expanded ? View.VISIBLE : View.GONE);
@@ -456,7 +459,29 @@ final class DownloadsPage {
                     albumPhotos.removeAllViews();
                     albumPhotosBuilt = false;
                 }
+                root.requestLayout();
             });
+        }
+
+        void bind(DownloadItem entry) {
+            if (id != entry.id) {
+                id = entry.id;
+                expanded = expandedIds.contains(id) || id == focusId;
+                shownUpdatedAt = -1;
+                shownAvailabilityFingerprint = 0;
+                shownPhotoFingerprint = 0;
+                shownThumbnail = "";
+                displayedEntry = null;
+                albumPhotos.removeAllViews();
+                albumPhotosBuilt = false;
+                thumbnail.setImageResource(android.R.drawable.ic_menu_gallery);
+                thumbnail.setColorFilter(MUTED);
+            } else if (id == focusId && !expanded) {
+                expanded = true;
+                shownUpdatedAt = -1;
+            }
+            root.setBackground(cardBackground(id == focusId));
+            update(entry);
         }
 
         void update(DownloadItem entry) {
@@ -559,7 +584,10 @@ final class DownloadsPage {
             tiktokLink.setContentDescription("Open this post in " + appName);
             tiktokLink.setVisibility(postUrl.isEmpty() ? View.GONE : View.VISIBLE);
             tiktokLink.setOnClickListener(v -> openPost(postUrl, appName));
-            if (entry.isActive() && !expanded) expanded = true;
+            if (entry.isActive() && !expanded) {
+                expanded = true;
+                expandedIds.add(id);
+            }
             toggle.setText(expanded ? "Hide details ▲" : "Show details ▼");
             details.setVisibility(expanded ? View.VISIBLE : View.GONE);
             DownloadItem.PhotoItem firstAlbumVideo = null;
