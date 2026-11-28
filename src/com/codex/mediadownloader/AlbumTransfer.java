@@ -105,9 +105,9 @@ final class AlbumTransfer {
                         PhotoFile image = selection.image;
                         File selected = selection.file;
                         if ("image/jpeg".equals(image.mime) || "image/png".equals(image.mime) ||
-                            "image/webp".equals(image.mime))
+                            "image/webp".equals(image.mime) || "image/heic".equals(image.mime))
                             tagPhoto(context, selected, result, entry.sourceUrl,
-                                image.width, image.height);
+                                image.mime, image.width, image.height);
                         String name = fileName(result, item.index, image.extension);
                         Saved saved = save(context, selected, name, image.mime);
                         photo.fileName = saved.name;
@@ -295,31 +295,52 @@ final class AlbumTransfer {
     }
 
     private static void tagPhoto(Context context, File file, StreamResolver.Result result,
-                                 String sourceUrl, int width, int height) throws Exception {
+                                 String sourceUrl, String mime, int width, int height) throws Exception {
         try {
-            ExifInterface exif = new ExifInterface(file);
             String description = result.postText.description;
             String comment = SourcePostUrl.forMetadata(sourceUrl);
-            String xmp = PhotoSourceMetadata.xmp(exif.getAttribute(ExifInterface.TAG_XMP),
-                comment, result.profileName, result.postText);
-            if (!description.isEmpty() && PhotoSourceMetadata.ascii(description))
-                exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, description);
-            if (PhotoSourceMetadata.ascii(result.profileName))
-                exif.setAttribute(ExifInterface.TAG_ARTIST, result.profileName);
-            exif.setAttribute(ExifInterface.TAG_USER_COMMENT, comment);
-            exif.setAttribute(ExifInterface.TAG_XMP, xmp);
-            exif.saveAttributes();
-            ExifInterface saved = new ExifInterface(file);
-            if (!comment.equals(saved.getAttribute(ExifInterface.TAG_USER_COMMENT)))
-                throw new Exception("Saved photo metadata did not match the source post");
-            if (!xmp.equals(saved.getAttribute(ExifInterface.TAG_XMP)))
-                throw new Exception("Saved photo XMP did not match the source post");
-            if (!description.isEmpty() && PhotoSourceMetadata.ascii(description) &&
-                !description.equals(saved.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION)))
-                throw new Exception("Saved photo description did not match the source post");
-            if (!result.profileName.isEmpty() && PhotoSourceMetadata.ascii(result.profileName) &&
-                !result.profileName.equals(saved.getAttribute(ExifInterface.TAG_ARTIST)))
-                throw new Exception("Saved photo creator did not match the source post");
+            if ("image/heic".equals(mime)) {
+                String previousXmp = null;
+                try {
+                    previousXmp = HeicXmpMetadata.read(file);
+                } catch (Exception unsupported) {
+                    // Preserve the existing record-only behavior for HEIC layouts
+                    // that cannot be updated without rewriting image data.
+                    DiagnosticsStore.trace(context, "photo.heic_xmp",
+                        "Unsupported HEIC metadata layout; retaining source details in the download record");
+                }
+                if (previousXmp != null) {
+                    String xmp = PhotoSourceMetadata.xmp(previousXmp, comment,
+                        result.profileName, result.postText);
+                    HeicXmpMetadata.write(file, xmp);
+                    if (!xmp.equals(HeicXmpMetadata.read(file)))
+                        throw new Exception("Saved HEIC XMP did not match the source post");
+                    if (!xmp.equals(new ExifInterface(file).getAttribute(ExifInterface.TAG_XMP)))
+                        throw new Exception("Android could not read saved HEIC XMP");
+                }
+            } else {
+                ExifInterface exif = new ExifInterface(file);
+                String xmp = PhotoSourceMetadata.xmp(exif.getAttribute(ExifInterface.TAG_XMP),
+                    comment, result.profileName, result.postText);
+                if (!description.isEmpty() && PhotoSourceMetadata.ascii(description))
+                    exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, description);
+                if (PhotoSourceMetadata.ascii(result.profileName))
+                    exif.setAttribute(ExifInterface.TAG_ARTIST, result.profileName);
+                exif.setAttribute(ExifInterface.TAG_USER_COMMENT, comment);
+                exif.setAttribute(ExifInterface.TAG_XMP, xmp);
+                exif.saveAttributes();
+                ExifInterface saved = new ExifInterface(file);
+                if (!comment.equals(saved.getAttribute(ExifInterface.TAG_USER_COMMENT)))
+                    throw new Exception("Saved photo metadata did not match the source post");
+                if (!xmp.equals(saved.getAttribute(ExifInterface.TAG_XMP)))
+                    throw new Exception("Saved photo XMP did not match the source post");
+                if (!description.isEmpty() && PhotoSourceMetadata.ascii(description) &&
+                    !description.equals(saved.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION)))
+                    throw new Exception("Saved photo description did not match the source post");
+                if (!result.profileName.isEmpty() && PhotoSourceMetadata.ascii(result.profileName) &&
+                    !result.profileName.equals(saved.getAttribute(ExifInterface.TAG_ARTIST)))
+                    throw new Exception("Saved photo creator did not match the source post");
+            }
             BitmapFactory.Options bounds = new BitmapFactory.Options();
             bounds.inJustDecodeBounds = true;
             BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
