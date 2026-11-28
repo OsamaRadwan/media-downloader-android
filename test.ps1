@@ -58,6 +58,7 @@ $sources = @(
     'tests\com\codex\mediadownloader\HttpDeadlineTest.java'
     'tests\com\codex\mediadownloader\RedNoteVideoPolicyTest.java'
     'tests\com\codex\mediadownloader\TikTokStoryBatchTest.java',
+    'tests\com\codex\mediadownloader\TikTokCreatorProfileTest.java',
     'tests\com\codex\mediadownloader\InstagramStoryBatchTest.java',
     'tests\com\codex\mediadownloader\SharedPostLinkTest.java',
     'src\com\codex\mediadownloader\StoryProgressBar.java',
@@ -105,6 +106,8 @@ if ($LASTEXITCODE -ne 0) { throw 'HTTP deadline tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'RedNote video policy tests failed' }
 & java -cp $target com.codex.mediadownloader.TikTokStoryBatchTest
 if ($LASTEXITCODE -ne 0) { throw 'TikTok Story batch tests failed' }
+& java -cp $target com.codex.mediadownloader.TikTokCreatorProfileTest
+if ($LASTEXITCODE -ne 0) { throw 'TikTok creator profile tests failed' }
 & java -cp $target com.codex.mediadownloader.InstagramStoryBatchTest
 if ($LASTEXITCODE -ne 0) { throw 'Instagram Story batch tests failed' }
 & java -cp $target com.codex.mediadownloader.StoryProgressBarTest

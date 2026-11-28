@@ -31,6 +31,7 @@ public final class StreamResolver {
     private static final BrowserProfile MOBILE = new BrowserProfile(MOBILE_USER_AGENT, false);
     private static final Pattern VIDEO_ID = Pattern.compile("/video/(\\d{15,22})");
     private static final Pattern PHOTO_ID = Pattern.compile("/photo/(\\d{15,22})");
+    private static final Pattern CREATOR_POST_PATH = Pattern.compile("^/@([A-Za-z0-9._-]{1,32})/(?:video|photo)/(\\d{15,22})/?$");
     private static final Pattern UNIVERSAL = Pattern.compile("<script[^>]*id=\"__UNIVERSAL_DATA_FOR_REHYDRATION__\"[^>]*>(.*?)</script>", Pattern.DOTALL);
 
     private static final class MissingPublicDetailException extends Exception {
@@ -208,10 +209,13 @@ public final class StreamResolver {
         // Establish the same anonymous web session before requesting signed media URLs.
         try { openSession(cookies, trace); } catch (Exception ignored) { /* The video page may still work. */ }
         String directUrl = directPostUrl(resolvedShareUrl, videoId, photoLink);
+        String creatorPostUrl = directUrl;
         JSONObject item;
         try {
-            item = itemFromPage(fetchText(directUrl, null, DESKTOP, cookies, trace),
+            StringBuilder finalUrl = new StringBuilder();
+            item = itemFromPage(fetchText(directUrl, finalUrl, DESKTOP, cookies, trace),
                 "webapp.video-detail", trace);
+            if (finalUrl.length() > 0) creatorPostUrl = finalUrl.toString();
         } catch (Exception first) {
             if (!isTransportFailure(first) && !(first instanceof MissingPublicDetailException)) throw first;
             if (directUrl.equals(pageUrl)) {
@@ -225,17 +229,38 @@ public final class StreamResolver {
                     item = itemFromPage(fetchText(pageUrl, null, DESKTOP, cookies, trace),
                         "webapp.video-detail", trace);
                 } catch (MissingPublicDetailException missing) {
-                    item = itemFromPage(fetchText(directUrl, null, MOBILE, cookies, trace),
+                    StringBuilder finalUrl = new StringBuilder();
+                    item = itemFromPage(fetchText(directUrl, finalUrl, MOBILE, cookies, trace),
                         "webapp.video-detail", trace);
+                    if (finalUrl.length() > 0) creatorPostUrl = finalUrl.toString();
                 }
             }
         }
         if (!videoId.equals(item.optString("id", ""))) throw new Exception("TikTok returned a different video");
+        JSONObject postVideo = item.optJSONObject("video");
+        JSONObject postImages = item.optJSONObject("imagePost");
+        if ((postVideo == null || postVideo.length() == 0) &&
+            (postImages == null || postImages.length() == 0)) {
+            trace(trace, "resolver.post_shape", "postId=" + videoId + " media=empty");
+            throw new MissingPublicDetailException("TikTok did not expose public media for this post");
+        }
         JSONObject author = item.optJSONObject("author");
         String accountId = author == null ? "" : author.optString("id", "");
         if (accountId.isEmpty()) accountId = item.optString("authorId", "");
-        if (!accountId.matches("\\d{6,24}")) throw new Exception("TikTok did not provide the creator account ID");
         String profileName = author == null ? "" : author.optString("uniqueId", "");
+        if (!accountId.matches("\\d{6,24}")) {
+            String handle = creatorHandleFromPostUrl(creatorPostUrl, videoId);
+            if (handle.isEmpty()) throw new Exception("TikTok did not provide the creator account ID");
+            JSONObject profile = userFromPage(fetchTextWithRetry(
+                "https://www.tiktok.com/@" + handle, null, DESKTOP, cookies, trace));
+            if (!handle.equalsIgnoreCase(profile.optString("uniqueId", "")))
+                throw new Exception("TikTok creator profile did not match the post link");
+            accountId = profile.optString("id", "");
+            if (!accountId.matches("\\d{6,24}"))
+                throw new Exception("TikTok creator profile did not provide an account ID");
+            profileName = profile.optString("uniqueId", "");
+            trace(trace, "resolver.creator_profile", "verified=true postId=" + videoId);
+        }
         profileName = profileName.replaceAll("[^A-Za-z0-9._-]", "_");
         if (profileName.replace("_", "").isEmpty()) profileName = accountId;
         long publishTimeSeconds = item.optLong("createTime", 0);
@@ -536,6 +561,30 @@ public final class StreamResolver {
         JSONObject item = info == null ? null : info.optJSONObject("itemStruct");
         if (item == null) throw new MissingPublicDetailException("Could not read the video details");
         return item;
+    }
+
+    static String creatorHandleFromPostUrl(String url, String postId) {
+        try {
+            URL parsed = new URL(url);
+            if (!"https".equalsIgnoreCase(parsed.getProtocol()) ||
+                !"www.tiktok.com".equalsIgnoreCase(parsed.getHost())) return "";
+            Matcher path = CREATOR_POST_PATH.matcher(parsed.getPath());
+            return path.matches() && postId.equals(path.group(2)) && !"_".equals(path.group(1)) ?
+                path.group(1) : "";
+        } catch (Exception ignored) { return ""; }
+    }
+
+    private static JSONObject userFromPage(String html) throws Exception {
+        Matcher script = UNIVERSAL.matcher(html);
+        if (!script.find()) throw new MissingPublicDetailException("TikTok creator profile was unavailable");
+        JSONObject scope = new JSONObject(script.group(1)).optJSONObject("__DEFAULT_SCOPE__");
+        JSONObject detail = scope == null ? null : scope.optJSONObject("webapp.user-detail");
+        if (detail == null || detail.optInt("statusCode", 0) != 0)
+            throw new MissingPublicDetailException("TikTok creator profile was unavailable");
+        JSONObject info = detail.optJSONObject("userInfo");
+        JSONObject user = info == null ? null : info.optJSONObject("user");
+        if (user == null) throw new MissingPublicDetailException("TikTok creator profile was unavailable");
+        return user;
     }
 
     private static String fetchText(String url, StringBuilder resolvedUrl, BrowserProfile profile,
