@@ -1,6 +1,6 @@
 # Pending changes
 
-This file contains only open implementation or verification work. Delete every line, leaving a zero-byte file, when all items are resolved. Source: `DEVELOPMENT_GOAL.md` CR-001 and the gaps explicitly documented in `FEATURES.md` and `docs/architecture.md`.
+This file contains existing open implementation or verification work. Add no new item unless the user explicitly asks for it. Delete every line, leaving a zero-byte file, when all items are resolved. See the user scope rule in `DEVELOPMENT_GOAL.md`.
 
 ## TikTok
 
