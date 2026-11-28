@@ -15,6 +15,7 @@ import android.net.Uri;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.util.LruCache;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -41,6 +42,12 @@ import java.util.concurrent.Executors;
 final class DownloadsPage {
     static final int RESTORED_FILE_REQUEST = 88;
     private static final ExecutorService historyWorker = Executors.newSingleThreadExecutor();
+    private static final ExecutorService imageWorker = Executors.newFixedThreadPool(2);
+    private static final LruCache<String, Bitmap> imageCache = new LruCache<String, Bitmap>(8192) {
+        @Override protected int sizeOf(String key, Bitmap image) {
+            return Math.max(1, image.getByteCount() / 1024);
+        }
+    };
     private static final int PAGE = AppPalette.PAGE;
     private static final int CARD = AppPalette.CARD;
     private static final int TEXT = AppPalette.TEXT;
@@ -612,19 +619,18 @@ final class DownloadsPage {
                 photoRow.setPadding(0, dp(8), 0, dp(8));
                 albumPhotos.addView(photoRow);
                 if (!photo.thumbnailPath.isEmpty()) {
-                    Bitmap preview = BitmapFactory.decodeFile(photo.thumbnailPath);
-                    if (preview != null) {
-                        ImageView photoPreview = new ImageView(activity);
-                        photoPreview.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                        photoPreview.setImageBitmap(preview);
-                        photoRow.addView(photoPreview, new LinearLayout.LayoutParams(dp(64), dp(64)));
-                        photoPreview.setContentDescription("Open " + photo.kind + " " + photo.index);
-                        if (photo.filePresent)
-                            photoPreview.setOnClickListener(v -> {
-                                if ("video".equals(photo.kind)) openVideo(photo.savedUri);
-                                else openPhoto(photo.savedUri, photo.mime);
-                            });
-                    }
+                    ImageView photoPreview = new ImageView(activity);
+                    photoPreview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    photoPreview.setImageResource(android.R.drawable.ic_menu_gallery);
+                    photoPreview.setColorFilter(MUTED);
+                    photoRow.addView(photoPreview, new LinearLayout.LayoutParams(dp(64), dp(64)));
+                    loadThumbnail(photo.thumbnailPath, photoPreview, dp(64));
+                    photoPreview.setContentDescription("Open " + photo.kind + " " + photo.index);
+                    if (photo.filePresent)
+                        photoPreview.setOnClickListener(v -> {
+                            if ("video".equals(photo.kind)) openVideo(photo.savedUri);
+                            else openPhoto(photo.savedUri, photo.mime);
+                        });
                 }
                 String label = ("video".equals(photo.kind) ? "Video " : "Photo ") +
                     photo.index + " / " + entry.photos.size() + " • " +
@@ -686,16 +692,46 @@ final class DownloadsPage {
                     availablePreview.index == 1 ? entry.thumbnailPath : "" : entry.thumbnailPath;
             if (!visibleThumbnail.equals(shownThumbnail)) {
                 shownThumbnail = visibleThumbnail;
-                Bitmap image = visibleThumbnail.isEmpty() ? null : BitmapFactory.decodeFile(visibleThumbnail);
-                if (image == null) {
-                    thumbnail.setImageResource(android.R.drawable.ic_menu_gallery);
-                    thumbnail.setColorFilter(MUTED);
-                } else {
-                    thumbnail.clearColorFilter();
-                    thumbnail.setImageBitmap(image);
-                }
+                thumbnail.setImageResource(android.R.drawable.ic_menu_gallery);
+                thumbnail.setColorFilter(MUTED);
+                if (!visibleThumbnail.isEmpty())
+                    loadThumbnail(visibleThumbnail, thumbnail, dp(82));
             }
         }
+    }
+
+    private void loadThumbnail(String path, ImageView image, int targetPixels) {
+        image.setTag(path);
+        String cacheKey = targetPixels + ":" + path;
+        Bitmap cached = imageCache.get(cacheKey);
+        if (cached != null) {
+            image.clearColorFilter();
+            image.setImageBitmap(cached);
+            return;
+        }
+        imageWorker.execute(() -> {
+            Bitmap bitmap = decodeThumbnail(path, targetPixels);
+            if (bitmap != null) imageCache.put(cacheKey, bitmap);
+            activity.runOnUiThread(() -> {
+                if (bitmap == null || activity.isDestroyed() || !path.equals(image.getTag())) return;
+                image.clearColorFilter();
+                image.setImageBitmap(bitmap);
+            });
+        });
+    }
+
+    private static Bitmap decodeThumbnail(String path, int targetPixels) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(path, bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inPreferredConfig = Bitmap.Config.RGB_565;
+        options.inSampleSize = 1;
+        while (bounds.outWidth / (options.inSampleSize * 2) >= targetPixels &&
+            bounds.outHeight / (options.inSampleSize * 2) >= targetPixels)
+            options.inSampleSize *= 2;
+        return BitmapFactory.decodeFile(path, options);
     }
 
     private void openVideo(String savedUri) {
