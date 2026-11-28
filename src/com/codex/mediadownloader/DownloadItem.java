@@ -131,11 +131,12 @@ final class DownloadItem {
     }
 
     String postUrl() {
-        if (isRedNoteUrl(sourceUrl)) return sourceUrl;
-        if (isRedNoteUrl(shareUrl)) return shareUrl;
-        if (isInstagramUrl(sourceUrl)) return sourceUrl;
-        if (isInstagramUrl(shareUrl)) return shareUrl;
-        return tiktokUrl();
+        String preferred = isRedNoteUrl(sourceUrl) ? sourceUrl :
+            isRedNoteUrl(shareUrl) ? shareUrl :
+            isInstagramUrl(sourceUrl) ? sourceUrl :
+            isInstagramUrl(shareUrl) ? shareUrl : tiktokUrl();
+        String publicUrl = DiagnosticsFormat.publicPostUrl(preferred);
+        return "unavailable".equals(publicUrl) ? "" : publicUrl;
     }
 
     boolean fromInstagram() {

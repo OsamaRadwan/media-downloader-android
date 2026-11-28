@@ -59,6 +59,15 @@ public final class ArchitectureBoundaryTest {
         DownloadItem rednote = item(8, "failed", "", "https://xhslink.cn/o/6lqrKemnx7F");
         check(rednote.fromRedNote() && rednote.postUrl().equals("https://xhslink.cn/o/6lqrKemnx7F"),
             "Failed RedNote jobs retain their validated source link");
+        check(item(11, "failed", "", "https://vt.tiktok.com/ZShort123/?share_token=private")
+            .postUrl().equals("https://vt.tiktok.com/ZShort123/"),
+            "Failed TikTok cards open a link without its share token");
+        check(item(12, "failed", "", "https://www.instagram.com/reel/ABC123xyz/?igsh=private#fragment")
+            .postUrl().equals("https://www.instagram.com/reel/ABC123xyz/"),
+            "Failed Instagram cards open a link without account parameters");
+        check(item(13, "failed", "", "https://xhslink.cn/o/6lqrKemnx7F?share_token=private")
+            .postUrl().equals("https://xhslink.cn/o/6lqrKemnx7F"),
+            "Failed RedNote cards open a short link without query parameters");
         check(!item(9, "failed", "", "https://xhslink.cn.evil.example/o/6lqrKemnx7F").fromRedNote(),
             "A lookalike RedNote host is rejected");
         DownloadItem album = new DownloadItem(7, 1, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0,
