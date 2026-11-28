@@ -519,6 +519,13 @@ public class OverlayAccessibilityService extends AccessibilityService implements
         if (share == null) share = find(root, "Share post");
         if (share == null) share = find(root, "Share story");
         if (share == null) share = find(root, "Share Story");
+        // Photo detail can label its bottom-right post action simply "Share".
+        // Keep the location check so a profile or navigation action is not selected.
+        if (share == null) {
+            Rect screen = new Rect();
+            root.getBoundsInScreen(screen);
+            share = findTikTokStoryShare(root, screen);
+        }
         return share;
     }
 
