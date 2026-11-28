@@ -46,6 +46,8 @@ $sources = @(
     'tests\com\codex\mediadownloader\MediaFileIdentityTest.java',
     'tests\com\codex\mediadownloader\Mp4SourceMetadataTest.java',
     'tests\com\codex\mediadownloader\PhotoRenditionTest.java',
+    'src\com\codex\mediadownloader\PhotoSourceMetadata.java',
+    'tests\com\codex\mediadownloader\PhotoSourceMetadataTest.java',
     'tests\com\codex\mediadownloader\VideoQualityTest.java',
     'tests\com\codex\mediadownloader\InstagramAlbumPageTest.java',
     'tests\com\codex\mediadownloader\DiagnosticsFormatTest.java'
@@ -82,6 +84,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Media file identity tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'MP4 metadata tests failed' }
 & java -cp "$target;$androidJar" com.codex.mediadownloader.PhotoRenditionTest
 if ($LASTEXITCODE -ne 0) { throw 'Photo rendition tests failed' }
+& java -cp $target com.codex.mediadownloader.PhotoSourceMetadataTest
+if ($LASTEXITCODE -ne 0) { throw 'Photo metadata tests failed' }
 & java -cp $target com.codex.mediadownloader.VideoQualityTest
 if ($LASTEXITCODE -ne 0) { throw 'Video quality tests failed' }
 & java -cp $target com.codex.mediadownloader.InstagramAlbumPageTest

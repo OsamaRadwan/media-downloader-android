@@ -299,20 +299,25 @@ final class AlbumTransfer {
         try {
             ExifInterface exif = new ExifInterface(file);
             String description = result.postText.description;
-            if (!description.isEmpty()) exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, description);
-            exif.setAttribute(ExifInterface.TAG_ARTIST, result.profileName);
-            String comment = SourcePostUrl.forMetadata(sourceUrl) +
-                (result.postText.title.isEmpty() ? "" : "\n" + result.postText.title) +
-                (result.postText.hashtags.isEmpty() ? "" : "\n" + result.postText.hashtags);
+            String comment = SourcePostUrl.forMetadata(sourceUrl);
+            String xmp = PhotoSourceMetadata.xmp(exif.getAttribute(ExifInterface.TAG_XMP),
+                comment, result.profileName, result.postText);
+            if (!description.isEmpty() && PhotoSourceMetadata.ascii(description))
+                exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, description);
+            if (PhotoSourceMetadata.ascii(result.profileName))
+                exif.setAttribute(ExifInterface.TAG_ARTIST, result.profileName);
             exif.setAttribute(ExifInterface.TAG_USER_COMMENT, comment);
+            exif.setAttribute(ExifInterface.TAG_XMP, xmp);
             exif.saveAttributes();
             ExifInterface saved = new ExifInterface(file);
             if (!comment.equals(saved.getAttribute(ExifInterface.TAG_USER_COMMENT)))
                 throw new Exception("Saved photo metadata did not match the source post");
-            if (!description.isEmpty() &&
+            if (!xmp.equals(saved.getAttribute(ExifInterface.TAG_XMP)))
+                throw new Exception("Saved photo XMP did not match the source post");
+            if (!description.isEmpty() && PhotoSourceMetadata.ascii(description) &&
                 !description.equals(saved.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION)))
                 throw new Exception("Saved photo description did not match the source post");
-            if (!result.profileName.isEmpty() &&
+            if (!result.profileName.isEmpty() && PhotoSourceMetadata.ascii(result.profileName) &&
                 !result.profileName.equals(saved.getAttribute(ExifInterface.TAG_ARTIST)))
                 throw new Exception("Saved photo creator did not match the source post");
             BitmapFactory.Options bounds = new BitmapFactory.Options();
