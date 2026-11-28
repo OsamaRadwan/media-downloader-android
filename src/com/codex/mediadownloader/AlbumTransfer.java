@@ -104,8 +104,10 @@ final class AlbumTransfer {
                         Selection selection = selectBest(context, result, entry, candidate, progress, firstFile, secondFile);
                         PhotoFile image = selection.image;
                         File selected = selection.file;
-                        if ("image/jpeg".equals(image.mime))
-                            tagJpeg(context, selected, result, entry.sourceUrl);
+                        if ("image/jpeg".equals(image.mime) || "image/png".equals(image.mime) ||
+                            "image/webp".equals(image.mime))
+                            tagPhoto(context, selected, result, entry.sourceUrl,
+                                image.width, image.height);
                         String name = fileName(result, item.index, image.extension);
                         Saved saved = save(context, selected, name, image.mime);
                         photo.fileName = saved.name;
@@ -292,20 +294,36 @@ final class AlbumTransfer {
         } finally { connection.disconnect(); }
     }
 
-    private static void tagJpeg(Context context, File file, StreamResolver.Result result,
-                                String sourceUrl) {
+    private static void tagPhoto(Context context, File file, StreamResolver.Result result,
+                                 String sourceUrl, int width, int height) throws Exception {
         try {
             ExifInterface exif = new ExifInterface(file);
             String description = result.postText.description;
             if (!description.isEmpty()) exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, description);
             exif.setAttribute(ExifInterface.TAG_ARTIST, result.profileName);
-            exif.setAttribute(ExifInterface.TAG_USER_COMMENT, SourcePostUrl.forMetadata(sourceUrl) +
+            String comment = SourcePostUrl.forMetadata(sourceUrl) +
                 (result.postText.title.isEmpty() ? "" : "\n" + result.postText.title) +
-                (result.postText.hashtags.isEmpty() ? "" : "\n" + result.postText.hashtags));
+                (result.postText.hashtags.isEmpty() ? "" : "\n" + result.postText.hashtags);
+            exif.setAttribute(ExifInterface.TAG_USER_COMMENT, comment);
             exif.saveAttributes();
+            ExifInterface saved = new ExifInterface(file);
+            if (!comment.equals(saved.getAttribute(ExifInterface.TAG_USER_COMMENT)))
+                throw new Exception("Saved photo metadata did not match the source post");
+            if (!description.isEmpty() &&
+                !description.equals(saved.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION)))
+                throw new Exception("Saved photo description did not match the source post");
+            if (!result.profileName.isEmpty() &&
+                !result.profileName.equals(saved.getAttribute(ExifInterface.TAG_ARTIST)))
+                throw new Exception("Saved photo creator did not match the source post");
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+            if (bounds.outWidth != width || bounds.outHeight != height)
+                throw new Exception("Photo dimensions changed after metadata writing");
         } catch (Exception error) {
             DiagnosticsStore.record(context, "album.metadata", error);
-            Log.w("MediaDownloader", "Could not embed JPEG metadata; album record retains it", error);
+            Log.w("MediaDownloader", "Could not embed or verify photo metadata", error);
+            throw error;
         }
     }
 
