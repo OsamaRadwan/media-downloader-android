@@ -4,6 +4,8 @@ This log distinguishes code installed locally from GitHub releases. It summarize
 
 ## Local development bundle after v1.68 — not yet published
 
+- **Failed RedNote short-link card (phone verified, no retained app change):** A temporary test build created a failed card with only a parameterized `xhslink.cn/o/...` share URL. Its Open in RedNote action omitted the query and fragment at the app boundary and opened the matching RedNote video (`6b06c6b00000000016019b0a`) on the HMD Skyline. All temporary code was removed; 24 Java suites passed, the original signed APK was rebuilt and reinstalled, and Accessibility stayed enabled. The synthetic failed card remains in phone history. No release was published.
+
 - **RedNote Android HTTP 206 photo check (phone tested, no retained app change):** A temporary full-range request saved a 1920×2560 original HEIC from a complete HTTP 206 response. The pulled image decoded and held the exact query-free post link. A second album item lacked a full-size public rendition and remained unsaved. The temporary request was removed and the prior signed APK reinstalled; all 24 Java suites passed. No release was published.
 
 - **Failed Instagram card link check (phone verified, no app change):** A visible public Reel sent with a synthetic `igsh` parameter produced a failed no-audio card. Its Open in Instagram action returned to the same clip; Instagram reported the exact shortcode, a query-free post URL, and no `igsh` ID. All 24 Java suites and the signed build passed. The test card remains in history; no release was published.
