@@ -29,30 +29,42 @@ final class Mp4SourceMetadata {
             long position = 0;
             long moovPosition = -1;
             int moovSize = 0;
+            int moovHeader = 8;
+            long openEndedPosition = -1;
+            long openEndedSize = 0;
             while (position < originalLength) {
-                if (originalLength - position < 8) throw new IOException("Incomplete MP4 box");
-                media.seek(position);
-                long size = Integer.toUnsignedLong(media.readInt());
-                byte[] typeBytes = new byte[4];
-                media.readFully(typeBytes);
-                if (size == 0 || size == 1 || size < 8 || size > originalLength - position)
-                    throw new IOException("Unsupported MP4 box size");
-                String type = new String(typeBytes, StandardCharsets.ISO_8859_1);
-                if ("moov".equals(type)) {
-                    if (moovPosition >= 0 || size > MAX_MOOV_BYTES)
+                TopBox box = readTopBox(media, position, originalLength);
+                if (box.openEnded) {
+                    openEndedPosition = position;
+                    openEndedSize = box.size;
+                }
+                if ("moov".equals(box.type)) {
+                    if (moovPosition >= 0 || box.size - box.header + 8 > MAX_MOOV_BYTES)
                         throw new IOException("Unsupported MP4 movie box");
                     moovPosition = position;
-                    moovSize = (int) size;
+                    moovSize = (int) box.size;
+                    moovHeader = box.header;
                 }
-                position += size;
+                position += box.size;
             }
             if (moovPosition < 0) throw new IOException("MP4 movie box missing");
-            byte[] moov = new byte[moovSize];
+            byte[] moov = new byte[moovSize - moovHeader + 8];
             media.seek(moovPosition);
-            media.readFully(moov);
+            if (moovHeader == 16) {
+                media.skipBytes(16);
+                writeInt(moov, 0, moov.length);
+                System.arraycopy(typeBytes("moov"), 0, moov, 4, 4);
+                media.readFully(moov, 8, moov.length - 8);
+            } else media.readFully(moov);
             byte[] updated = addTags(moov, sourceUrl, postText);
+            if (openEndedPosition >= 0 && openEndedSize > 0xffffffffL)
+                throw new IOException("Open-ended MP4 box exceeds 32-bit size");
             media.seek(originalLength);
             media.write(updated);
+            if (openEndedPosition >= 0) {
+                media.seek(openEndedPosition);
+                media.writeInt((int) openEndedSize);
+            }
             media.seek(moovPosition + 4);
             media.write(new byte[]{'f', 'r', 'e', 'e'});
             media.getFD().sync();
@@ -73,16 +85,17 @@ final class Mp4SourceMetadata {
         try (RandomAccessFile media = new RandomAccessFile(file, "r")) {
             long position = 0;
             while (position + 8 <= media.length()) {
-                media.seek(position);
-                long size = Integer.toUnsignedLong(media.readInt());
-                byte[] boxType = new byte[4];
-                media.readFully(boxType);
-                if (size < 8 || size > media.length() - position) return false;
-                if (Arrays.equals(boxType, typeBytes("moov"))) {
-                    if (size > MAX_MOOV_BYTES) return false;
-                    byte[] moov = new byte[(int) size];
+                TopBox box = readTopBox(media, position, media.length());
+                if ("moov".equals(box.type)) {
+                    if (box.size - box.header + 8 > MAX_MOOV_BYTES) return false;
+                    byte[] moov = new byte[(int) (box.size - box.header + 8)];
                     media.seek(position);
-                    media.readFully(moov);
+                    if (box.header == 16) {
+                        media.skipBytes(16);
+                        writeInt(moov, 0, moov.length);
+                        System.arraycopy(typeBytes("moov"), 0, moov, 4, 4);
+                        media.readFully(moov, 8, moov.length - 8);
+                    } else media.readFully(moov);
                     Box udta = find(moov, 8, moov.length, "udta");
                     if (udta == null) return false;
                     Box meta = find(moov, udta.offset + 8, udta.end(), "meta");
@@ -96,7 +109,7 @@ final class Mp4SourceMetadata {
                     String stored = new String(moov, data.offset + 16, data.size - 16, StandardCharsets.UTF_8);
                     return allowMoreText ? stored.contains(value) : stored.equals(value);
                 }
-                position += size;
+                position += box.size;
             }
             return false;
         }
@@ -201,6 +214,26 @@ final class Mp4SourceMetadata {
         return bytes;
     }
 
+    private static TopBox readTopBox(RandomAccessFile media, long position, long length)
+        throws IOException {
+        if (length - position < 8) throw new IOException("Incomplete MP4 box");
+        media.seek(position);
+        long size = Integer.toUnsignedLong(media.readInt());
+        byte[] typeBytes = new byte[4];
+        media.readFully(typeBytes);
+        int header = 8;
+        boolean openEnded = size == 0;
+        if (size == 1) {
+            if (length - position < 16) throw new IOException("Incomplete extended MP4 box");
+            size = media.readLong();
+            header = 16;
+        } else if (openEnded) size = length - position;
+        if (size < header || size > length - position)
+            throw new IOException("Unsupported MP4 box size");
+        return new TopBox(new String(typeBytes, StandardCharsets.ISO_8859_1), size,
+            header, openEnded);
+    }
+
     private static byte[] concat(byte[]... pieces) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         for (byte[] piece : pieces) out.write(piece, 0, piece.length);
@@ -237,5 +270,18 @@ final class Mp4SourceMetadata {
         final int size;
         Box(int offset, int size) { this.offset = offset; this.size = size; }
         int end() { return offset + size; }
+    }
+
+    private static final class TopBox {
+        final String type;
+        final long size;
+        final int header;
+        final boolean openEnded;
+        TopBox(String type, long size, int header, boolean openEnded) {
+            this.type = type;
+            this.size = size;
+            this.header = header;
+            this.openEnded = openEnded;
+        }
     }
 }

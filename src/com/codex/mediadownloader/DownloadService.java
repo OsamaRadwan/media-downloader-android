@@ -608,87 +608,135 @@ public class DownloadService extends Service {
                        File file, String label, int jobId, String title, String fileName,
                        int width, int height, DownloadStore.Entry entry, long savedBytes,
                        int albumIndex) throws Exception {
-        HttpEngine engine = profile == 5 && !NetworkRouteStore.usesProxy() ? new HttpEngine.Builder(this).build() : null;
-        HttpURLConnection connection = engine == null ? NetworkRouteStore.open(new URL(url)) :
-            (HttpURLConnection) engine.openConnection(new URL(url));
-        connection.setConnectTimeout(15000);
-        connection.setReadTimeout(30000);
-        connection.setInstanceFollowRedirects(true);
-        String userAgent = profile >= 3 ?
-            "Mozilla/5.0 (Linux; Android 15; Mobile) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36" :
-            StreamResolver.USER_AGENT;
-        connection.setRequestProperty("User-Agent", userAgent);
-        if (profile == 0 || profile == 3 || profile == 5) connection.setRequestProperty("Referer", referer);
-        else if (profile == 1) connection.setRequestProperty("Referer", "https://www.tiktok.com/");
-        connection.setRequestProperty("Accept", "video/mp4,video/*;q=0.9,*/*;q=0.8");
-        if (profile == 4) connection.setRequestProperty("Range", "bytes=0-");
-        MediaRequestCookies.attach(connection, cookies, visitorCookies);
-        long requestStarted = SystemClock.elapsedRealtime();
-        DiagnosticsStore.trace(this, "video.request", "job=" + jobId + " item=" + albumIndex +
-            " host=" + connection.getURL().getHost() + " mode=" + (visitorCookies ? "visitor" : "public") +
-            " profile=" + profile + " listed=" + width + "x" + height);
-        try {
-            int code = connection.getResponseCode();
-            DiagnosticsStore.trace(this, "video.response", "job=" + jobId + " item=" + albumIndex +
-                " host=" + connection.getURL().getHost() + " http=" + code +
-                " type=" + connection.getContentType() + " bytes=" + connection.getContentLengthLong() +
-                " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStarted));
-            Log.d("MediaDownloader", "Media response profile=" + profile + " host=" + connection.getURL().getHost() +
-                " status=" + code + " type=" + connection.getContentType());
-            if (code != 200 && code != 206) throw new Exception(label + ": HTTP " + code);
-            long total = connection.getContentLengthLong();
-            entry.state = "downloading";
-            entry.stage = label;
-            entry.totalBytes = albumIndex > 0 ? -1 : total;
-            DownloadStore.save(this, entry, false);
-            notifications.notify(jobId, detailNotice(jobId, title, fileName, label, width, height, 0, total, null));
-            try (InputStream input = connection.getInputStream(); OutputStream output = new FileOutputStream(file)) {
-                byte[] first = new byte[64];
-                int head = 0;
-                while (head < first.length) {
-                    int count = input.read(first, head, first.length - head);
-                    if (count < 0) break;
-                    head += count;
-                }
-                if (head < 8 || first[4] != 'f' || first[5] != 't' || first[6] != 'y' || first[7] != 'p') {
-                    throw new Exception("Video server returned a page instead of MP4");
-                }
-                output.write(first, 0, head);
-                long written = head;
-                long lastUpdate = SystemClock.elapsedRealtime();
-                long lastBytes = 0;
-                byte[] buffer = new byte[65536];
-                int count;
-                while ((count = input.read(buffer)) != -1) {
-                    output.write(buffer, 0, count);
-                    written += count;
-                    long now = SystemClock.elapsedRealtime();
-                    if (now - lastUpdate >= 800) {
-                        entry.downloadedBytes = savedBytes + written;
-                        entry.speedBytesPerSecond = Math.max(0, (written - lastBytes) * 1000 / (now - lastUpdate));
-                        DownloadStore.save(this, entry, false);
-                        notifications.notify(jobId, detailNotice(jobId, title, fileName, label, width, height, written, total, null));
-                        lastUpdate = now;
-                        lastBytes = written;
-                    }
-                }
-                output.flush();
-                MediaResponseLength.verify(code, total, connection.getHeaderField("Content-Range"), written);
-                if (written < 1024) throw new Exception(label + " was unexpectedly short");
-                entry.downloadedBytes = savedBytes + written;
-                entry.totalBytes = albumIndex > 0 ? -1 : total > 0 ? total : written;
-                entry.speedBytesPerSecond = 0;
-                DownloadStore.save(this, entry, false);
-                DiagnosticsStore.trace(this, "video.received", "job=" + jobId + " item=" + albumIndex +
-                    " bytes=" + written +
+        long expectedTotal = -1;
+        String validator = null;
+        for (int retry = 0; retry <= 2; retry++) {
+            long resumeAt = retry == 0 ? 0 : file.length();
+            if (expectedTotal <= 0 || resumeAt >= expectedTotal) resumeAt = 0;
+            HttpEngine engine = profile == 5 && !NetworkRouteStore.usesProxy() ?
+                new HttpEngine.Builder(this).build() : null;
+            HttpURLConnection connection = engine == null ? NetworkRouteStore.open(new URL(url)) :
+                (HttpURLConnection) engine.openConnection(new URL(url));
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setInstanceFollowRedirects(true);
+            String userAgent = profile >= 3 ?
+                "Mozilla/5.0 (Linux; Android 15; Mobile) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36" :
+                StreamResolver.USER_AGENT;
+            connection.setRequestProperty("User-Agent", userAgent);
+            if (profile == 0 || profile == 3 || profile == 5) connection.setRequestProperty("Referer", referer);
+            else if (profile == 1) connection.setRequestProperty("Referer", "https://www.tiktok.com/");
+            connection.setRequestProperty("Accept", "video/mp4,video/*;q=0.9,*/*;q=0.8");
+            if (resumeAt > 0) {
+                connection.setRequestProperty("Range", "bytes=" + resumeAt + "-");
+                if (validator != null) connection.setRequestProperty("If-Range", validator);
+            } else if (profile == 4) connection.setRequestProperty("Range", "bytes=0-");
+            MediaRequestCookies.attach(connection, cookies, visitorCookies);
+            long requestStarted = SystemClock.elapsedRealtime();
+            DiagnosticsStore.trace(this, "video.request", "job=" + jobId + " item=" + albumIndex +
+                " host=" + connection.getURL().getHost() + " mode=" + (visitorCookies ? "visitor" : "public") +
+                " profile=" + profile + " listed=" + width + "x" + height +
+                " resumeAt=" + resumeAt + " retry=" + retry);
+            try {
+                int code = connection.getResponseCode();
+                DiagnosticsStore.trace(this, "video.response", "job=" + jobId + " item=" + albumIndex +
+                    " host=" + connection.getURL().getHost() + " http=" + code +
+                    " type=" + connection.getContentType() + " bytes=" + connection.getContentLengthLong() +
                     " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStarted));
-                notifications.notify(jobId, detailNotice(jobId, title, fileName, "Stream received", width, height, written, total, null));
-            }
-        } finally {
-            connection.disconnect();
-            if (engine != null) {
-                try { engine.shutdown(); }
-                catch (Exception error) { Log.d("MediaDownloader", "HTTP engine shutdown deferred", error); }
+                Log.d("MediaDownloader", "Media response profile=" + profile + " host=" + connection.getURL().getHost() +
+                    " status=" + code + " type=" + connection.getContentType() + " resumed=" + (resumeAt > 0));
+                if (code != 200 && code != 206) throw new Exception(label + ": HTTP " + code);
+                if (resumeAt > 0 && code == 200) {
+                    // If-Range can return a new full representation; never append it to old bytes.
+                    resumeAt = 0;
+                    expectedTotal = -1;
+                }
+                long responseLength = connection.getContentLengthLong();
+                if (resumeAt == 0) {
+                    expectedTotal = MediaResponseLength.total(code, responseLength,
+                        connection.getHeaderField("Content-Range"));
+                    String etag = connection.getHeaderField("ETag");
+                    validator = etag != null && !etag.startsWith("W/") ? etag :
+                        connection.getHeaderField("Last-Modified");
+                }
+                entry.state = "downloading";
+                entry.stage = retry == 0 ? label : "Resuming stream • option " + entry.streamOption;
+                entry.totalBytes = albumIndex > 0 ? -1 : expectedTotal;
+                DownloadStore.save(this, entry, false);
+                notifications.notify(jobId, detailNotice(jobId, title, fileName, entry.stage,
+                    width, height, resumeAt, expectedTotal, null));
+                try (InputStream input = connection.getInputStream();
+                     OutputStream output = new FileOutputStream(file, resumeAt > 0)) {
+                    long received = 0;
+                    if (resumeAt == 0) {
+                        byte[] first = new byte[64];
+                        int head = 0;
+                        while (head < first.length) {
+                            int count = input.read(first, head, first.length - head);
+                            if (count < 0) break;
+                            head += count;
+                        }
+                        if (head < 8 || first[4] != 'f' || first[5] != 't' ||
+                            first[6] != 'y' || first[7] != 'p')
+                            throw new Exception("Video server returned a page instead of MP4");
+                        output.write(first, 0, head);
+                        received = head;
+                    }
+                    long lastUpdate = SystemClock.elapsedRealtime();
+                    long lastBytes = 0;
+                    byte[] buffer = new byte[65536];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) {
+                        output.write(buffer, 0, count);
+                        received += count;
+                        long now = SystemClock.elapsedRealtime();
+                        if (now - lastUpdate >= 800) {
+                            long written = resumeAt + received;
+                            entry.downloadedBytes = savedBytes + written;
+                            entry.speedBytesPerSecond = Math.max(0,
+                                (received - lastBytes) * 1000 / (now - lastUpdate));
+                            DownloadStore.save(this, entry, false);
+                            notifications.notify(jobId, detailNotice(jobId, title, fileName,
+                                entry.stage, width, height, written, expectedTotal, null));
+                            lastUpdate = now;
+                            lastBytes = received;
+                        }
+                    }
+                    output.flush();
+                    if (resumeAt > 0) MediaResponseLength.verifyContinuation(code, responseLength,
+                        connection.getHeaderField("Content-Range"), resumeAt, expectedTotal, received);
+                    else MediaResponseLength.verify(code, responseLength,
+                        connection.getHeaderField("Content-Range"), received);
+                    long written = resumeAt + received;
+                    if (written < 1024 || expectedTotal > 0 && written != expectedTotal)
+                        throw new Exception(label + " was unexpectedly short");
+                    entry.downloadedBytes = savedBytes + written;
+                    entry.totalBytes = albumIndex > 0 ? -1 : written;
+                    entry.speedBytesPerSecond = 0;
+                    DownloadStore.save(this, entry, false);
+                    DiagnosticsStore.trace(this, "video.received", "job=" + jobId + " item=" + albumIndex +
+                        " bytes=" + written + " retries=" + retry +
+                        " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStarted));
+                    notifications.notify(jobId, detailNotice(jobId, title, fileName,
+                        "Stream received", width, height, written, written, null));
+                    return;
+                }
+            } catch (java.io.IOException error) {
+                long partial = file.length();
+                if (retry == 2 || expectedTotal <= 0 || partial >= expectedTotal)
+                    throw error;
+                DiagnosticsStore.trace(this, "video.resume", "job=" + jobId +
+                    " item=" + albumIndex + " received=" + partial +
+                    " total=" + expectedTotal + " retry=" + (retry + 1) +
+                    " cause=" + error.getClass().getSimpleName());
+                Log.w("MediaDownloader", "Resuming interrupted stream at " + partial +
+                    " of " + expectedTotal + " bytes", error);
+            } finally {
+                connection.disconnect();
+                if (engine != null) {
+                    try { engine.shutdown(); }
+                    catch (Exception error) { Log.d("MediaDownloader", "HTTP engine shutdown deferred", error); }
+                }
             }
         }
     }

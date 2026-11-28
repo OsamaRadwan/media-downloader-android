@@ -94,6 +94,31 @@ public final class Mp4SourceMetadataTest {
                 check(media.readInt() == 0x01020304, "Encoded media bytes remain at their original offset");
             }
         } finally { sample.delete(); }
+        for (int format = 0; format < 3; format++) {
+            File alternate = File.createTempFile("mp4-large-box", ".mp4");
+            try {
+                byte[] payload = new byte[]{11, 22, 33, 44};
+                byte[] movie = box("moov", box("mvhd", new byte[4]));
+                if (format == 2) movie = extendedBox("moov", box("mvhd", new byte[4]));
+                byte[] media = format == 0 ? extendedBox("mdat", payload) :
+                    format == 1 ? openEndedBox("mdat", payload) : box("mdat", payload);
+                long mediaOffset = 12 + movie.length + media.length - payload.length;
+                try (FileOutputStream out = new FileOutputStream(alternate)) {
+                    out.write(box("ftyp", new byte[]{'i', 's', 'o', 'm'}));
+                    out.write(movie);
+                    out.write(media);
+                }
+                Mp4SourceMetadata.write(alternate, REDNOTE_URL, post);
+                check(Mp4SourceMetadata.contains(alternate, REDNOTE_URL),
+                    "Source link survives alternate MP4 box size " + format);
+                try (RandomAccessFile checkFile = new RandomAccessFile(alternate, "r")) {
+                    checkFile.seek(mediaOffset);
+                    byte[] actual = new byte[payload.length];
+                    checkFile.readFully(actual);
+                    check(Arrays.equals(actual, payload), "Media offset survives box size " + format);
+                }
+            } finally { alternate.delete(); }
+        }
         if (args.length == 2) {
             File source = new File(args[0]);
             File output = new File(args[1]);
@@ -114,6 +139,22 @@ public final class Mp4SourceMetadataTest {
         result[3] = (byte) size;
         for (int i = 0; i < 4; i++) result[4 + i] = (byte) type.charAt(i);
         System.arraycopy(data, 0, result, 8, data.length);
+        return result;
+    }
+
+    private static byte[] extendedBox(String type, byte[] data) {
+        byte[] result = new byte[data.length + 16];
+        result[3] = 1;
+        for (int i = 0; i < 4; i++) result[4 + i] = (byte) type.charAt(i);
+        long size = result.length;
+        for (int i = 15; i >= 8; i--) { result[i] = (byte) size; size >>>= 8; }
+        System.arraycopy(data, 0, result, 16, data.length);
+        return result;
+    }
+
+    private static byte[] openEndedBox(String type, byte[] data) {
+        byte[] result = box(type, data);
+        Arrays.fill(result, 0, 4, (byte) 0);
         return result;
     }
 

@@ -12,7 +12,9 @@ enum OverlayPlacement {
     REDNOTE_PHOTO(OverlayOption.REDNOTE_PHOTO_SIDE, OverlayOption.REDNOTE_PHOTO_HEIGHT,
         OverlayOption.REDNOTE_PHOTO_GAP),
     REDNOTE_VIDEO(OverlayOption.REDNOTE_VIDEO_SIDE, OverlayOption.REDNOTE_VIDEO_HEIGHT,
-        OverlayOption.REDNOTE_VIDEO_GAP);
+        OverlayOption.REDNOTE_VIDEO_GAP),
+    REDNOTE_LANDSCAPE(OverlayOption.REDNOTE_LANDSCAPE_SIDE,
+        OverlayOption.REDNOTE_LANDSCAPE_HEIGHT, OverlayOption.REDNOTE_LANDSCAPE_GAP);
 
     final OverlayOption side, height, gap;
     OverlayPlacement(OverlayOption side, OverlayOption height, OverlayOption gap) {

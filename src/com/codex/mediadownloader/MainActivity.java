@@ -298,7 +298,7 @@ public class MainActivity extends Activity {
         RadioGroup placementPreview = new RadioGroup(this);
         placementPreview.setOrientation(RadioGroup.VERTICAL);
         String[] placementNames = {"TikTok", "TikTok full-screen landscape", "Instagram feed posts", "Instagram Reels",
-            "RedNote photo posts", "RedNote videos"};
+            "RedNote photo posts", "RedNote videos", "RedNote full-screen landscape"};
         OverlayPlacement[] placements = OverlayPlacement.values();
         for (int i = 0; i < placementNames.length; i++) {
             RadioButton radio = new RadioButton(this);
@@ -354,6 +354,12 @@ public class MainActivity extends Activity {
         radioGroup(page, new String[]{"Left", "Right"}, OverlayOption.REDNOTE_VIDEO_SIDE);
         slider(page, "Vertical position", OverlayOption.REDNOTE_VIDEO_HEIGHT, "%");
         slider(page, "Distance from border", OverlayOption.REDNOTE_VIDEO_GAP, " dp");
+
+        section(page, "RedNote full-screen landscape placement");
+        addText(page, "Screen side", 15, TEXT, true, 12);
+        radioGroup(page, new String[]{"Left", "Right"}, OverlayOption.REDNOTE_LANDSCAPE_SIDE);
+        slider(page, "Vertical position", OverlayOption.REDNOTE_LANDSCAPE_HEIGHT, "%");
+        slider(page, "Distance from border", OverlayOption.REDNOTE_LANDSCAPE_GAP, " dp");
 
         section(page, "Arrow and touch area");
         addText(page, "Icon style (transparent image)", 15, TEXT, true, 12);

@@ -96,16 +96,23 @@ final class OverlaySettings {
     static void placeLandscapeVideo(WindowManager.LayoutParams params, Context context,
                                     OverlayPreferences prefs, Rect videoBounds,
                                     int screenWidth, int screenHeight) {
-        place(params, context, prefs, OverlayPlacement.TIKTOK_LANDSCAPE, screenHeight);
+        placeLandscapeVideo(params, context, prefs, OverlayPlacement.TIKTOK_LANDSCAPE,
+            videoBounds, screenWidth, screenHeight);
+    }
+
+    static void placeLandscapeVideo(WindowManager.LayoutParams params, Context context,
+                                    OverlayPreferences prefs, OverlayPlacement placement,
+                                    Rect videoBounds, int screenWidth, int screenHeight) {
+        place(params, context, prefs, placement, screenHeight);
         if (videoBounds == null || videoBounds.isEmpty()) return;
-        boolean right = prefs.get(OverlayOption.TIKTOK_LANDSCAPE_SIDE) == 1;
+        boolean right = prefs.get(placement.side) == 1;
         int left = OverlayGeometry.horizontal(screenWidth, videoBounds.left, videoBounds.right,
-            params.width, dp(context, prefs.get(OverlayOption.TIKTOK_LANDSCAPE_GAP)),
+            params.width, dp(context, prefs.get(placement.gap)),
             right);
         params.gravity = (right ? Gravity.RIGHT : Gravity.LEFT) | Gravity.TOP;
         params.x = right ? screenWidth - left - params.width : left;
         params.y = OverlayGeometry.vertical(screenHeight, videoBounds.top, videoBounds.bottom,
-            params.height, prefs.get(OverlayOption.TIKTOK_LANDSCAPE_HEIGHT));
+            params.height, prefs.get(placement.height));
     }
 
     static void placeTikTokPortrait(WindowManager.LayoutParams params, Context context,

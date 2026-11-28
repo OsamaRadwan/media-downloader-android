@@ -32,4 +32,33 @@ final class MediaResponseLength {
             throw new IOException("Partial media response has an invalid Content-Range", error);
         }
     }
+
+    static long total(int status, long contentLength, String contentRange) throws IOException {
+        if (status != 206) return contentLength;
+        Matcher range = RANGE.matcher(contentRange == null ? "" : contentRange.trim());
+        if (!range.matches()) throw new IOException("Partial media response has no valid Content-Range");
+        try { return Long.parseLong(range.group(3)); }
+        catch (NumberFormatException error) {
+            throw new IOException("Partial media response has an invalid Content-Range", error);
+        }
+    }
+
+    static void verifyContinuation(int status, long contentLength, String contentRange,
+                                   long offset, long expectedTotal, long received) throws IOException {
+        if (status != 206 || offset <= 0 || expectedTotal <= offset || received < 0 ||
+            (contentLength >= 0 && received != contentLength))
+            throw new IOException("Media resume did not return the requested remaining bytes");
+        Matcher range = RANGE.matcher(contentRange == null ? "" : contentRange.trim());
+        if (!range.matches()) throw new IOException("Media resume has no valid Content-Range");
+        try {
+            long first = Long.parseLong(range.group(1));
+            long last = Long.parseLong(range.group(2));
+            long total = Long.parseLong(range.group(3));
+            if (first != offset || total != expectedTotal || last != total - 1 ||
+                received != total - offset)
+                throw new IOException("Media resume does not match the original file");
+        } catch (NumberFormatException error) {
+            throw new IOException("Media resume has an invalid Content-Range", error);
+        }
+    }
 }

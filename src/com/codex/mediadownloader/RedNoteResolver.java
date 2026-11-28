@@ -204,6 +204,9 @@ final class RedNoteResolver {
         URL current = new URL(link);
         for (int redirect = 0; redirect < 5; redirect++) {
             if (!accepts(current.toString())) {
+                if ("www.rednote.com".equalsIgnoreCase(current.getHost()) &&
+                    current.getPath().startsWith("/404"))
+                    throw new Exception("RedNote public post is unavailable");
                 String[] segments = current.getPath().split("/");
                 String pathKind = segments.length > 1 ? segments[1] : "root";
                 if (pathKind.matches("[0-9]+")) pathKind = "numeric-" + pathKind.length();

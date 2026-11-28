@@ -25,6 +25,17 @@ public final class MediaResponseLengthTest {
             "a truncated range body");
         reject(() -> MediaResponseLength.verify(206, 1000, "bytes */1000", 1000),
             "an unsatisfied range");
+        if (MediaResponseLength.total(206, 750, "bytes 0-749/1000") != 1000)
+            throw new AssertionError("range total lost");
+        MediaResponseLength.verifyContinuation(206, 750, "bytes 250-999/1000", 250, 1000, 750);
+        reject(() -> MediaResponseLength.verifyContinuation(200, 1000, null, 250, 1000, 1000),
+            "a full response appended to partial bytes");
+        reject(() -> MediaResponseLength.verifyContinuation(206, 750, "bytes 249-998/1000", 250, 1000, 750),
+            "an overlapping range");
+        reject(() -> MediaResponseLength.verifyContinuation(206, 750, "bytes 250-999/1001", 250, 1000, 750),
+            "a changed source length");
+        reject(() -> MediaResponseLength.verifyContinuation(206, 749, "bytes 250-999/1000", 250, 1000, 749),
+            "an incomplete continuation");
         System.out.println("MediaResponseLengthTest passed");
     }
 

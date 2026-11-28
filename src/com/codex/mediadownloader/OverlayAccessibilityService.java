@@ -189,7 +189,14 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                     OverlayPlacement.INSTAGRAM_REEL : OverlayPlacement.INSTAGRAM_FEED;
                 showOverlay(INSTAGRAM, instagramPlacement);
             } else if (REDNOTE.equals(topApp)) {
-                if (find(root, "Say something") == null || findRedNoteShare(root) == null) hideOverlay();
+                if (isRedNoteLandscapePlayer(root)) {
+                    Rect screen = new Rect();
+                    root.getBoundsInScreen(screen);
+                    showOverlay(REDNOTE, OverlayPlacement.REDNOTE_LANDSCAPE,
+                        findRedNoteLandscapeVideoBounds(root), screen, null);
+                } else if (isRedNoteFullScreenPhoto(root)) {
+                    showOverlay(REDNOTE, OverlayPlacement.REDNOTE_PHOTO);
+                } else if (find(root, "Say something") == null || findRedNoteShare(root) == null) hideOverlay();
                 else showOverlay(REDNOTE, find(root, "Picture, No.") == null ?
                     OverlayPlacement.REDNOTE_VIDEO : OverlayPlacement.REDNOTE_PHOTO);
             } else hideOverlay();
@@ -215,10 +222,12 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                              Rect screenBounds, Rect rightControlBounds) {
         // A display rotation can leave the old overlay surface visible to WindowManager
         // but empty on screen. Give portrait and landscape their own fresh view surface.
-        if (overlay != null && TIKTOK.equals(app) && TIKTOK.equals(sourceApp) &&
-            newPlacement != placement &&
-            (newPlacement == OverlayPlacement.TIKTOK || newPlacement == OverlayPlacement.TIKTOK_LANDSCAPE)) {
-            tikTokPortraitRestoreUntil = newPlacement == OverlayPlacement.TIKTOK ?
+        if (overlay != null && app.equals(sourceApp) && newPlacement != placement &&
+            ((TIKTOK.equals(app) && (newPlacement == OverlayPlacement.TIKTOK ||
+                newPlacement == OverlayPlacement.TIKTOK_LANDSCAPE)) ||
+             (REDNOTE.equals(app) && (newPlacement == OverlayPlacement.REDNOTE_VIDEO ||
+                newPlacement == OverlayPlacement.REDNOTE_LANDSCAPE)))) {
+            if (TIKTOK.equals(app)) tikTokPortraitRestoreUntil = newPlacement == OverlayPlacement.TIKTOK ?
                 android.os.SystemClock.uptimeMillis() + 2000 : 0;
             hideOverlay();
         }
@@ -291,9 +300,10 @@ public class OverlayAccessibilityService extends AccessibilityService implements
     }
 
     private void placeOverlay(WindowManager.LayoutParams params) {
-        if (placement == OverlayPlacement.TIKTOK_LANDSCAPE && tiktokScreenBounds != null &&
+        if ((placement == OverlayPlacement.TIKTOK_LANDSCAPE ||
+            placement == OverlayPlacement.REDNOTE_LANDSCAPE) && tiktokScreenBounds != null &&
             !tiktokScreenBounds.isEmpty())
-            OverlaySettings.placeLandscapeVideo(params, this, settings, tiktokVideoBounds,
+            OverlaySettings.placeLandscapeVideo(params, this, settings, placement, tiktokVideoBounds,
                 tiktokScreenBounds.width(), tiktokScreenBounds.height());
         else if (placement == OverlayPlacement.TIKTOK && tiktokScreenBounds != null &&
             !tiktokScreenBounds.isEmpty()) {
@@ -359,6 +369,45 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             }
         }
         return best == null ? playerBounds : best;
+    }
+
+    private boolean isRedNoteLandscapePlayer(AccessibilityNodeInfo root) {
+        return isLandscape(root) && findNodeById(root, ":id/landscapeViewPager") != null &&
+            findNodeById(root, ":id/videoViewV2Wrapper") != null;
+    }
+
+    private boolean isRedNoteFullScreenPhoto(AccessibilityNodeInfo root) {
+        return !isLandscape(root) && findNodeById(root, ":id/section_image") != null &&
+            findNodeById(root, ":id/iv_large_image") != null;
+    }
+
+    private Rect findRedNoteLandscapeVideoBounds(AccessibilityNodeInfo root) {
+        AccessibilityNodeInfo player = findNodeById(root, ":id/videoViewV2Wrapper");
+        Rect bounds = new Rect();
+        if (player == null) return bounds;
+        player.getBoundsInScreen(bounds);
+        Rect content = findRedNoteVideoContent(player, bounds);
+        return content == null ? bounds : content;
+    }
+
+    private Rect findRedNoteVideoContent(AccessibilityNodeInfo node, Rect player) {
+        if (node == null) return null;
+        Rect best = null;
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child == null) continue;
+            Rect candidate = new Rect();
+            child.getBoundsInScreen(candidate);
+            if ("android.view.View".contentEquals(child.getClassName()) &&
+                player.contains(candidate) && candidate.width() >= player.width() / 2 &&
+                candidate.width() < player.width() && candidate.height() >= player.height() / 2)
+                if (best == null || candidate.width() * (long) candidate.height() >
+                    best.width() * (long) best.height()) best = candidate;
+            Rect nested = findRedNoteVideoContent(child, player);
+            if (nested != null && (best == null || nested.width() * (long) nested.height() >
+                best.width() * (long) best.height())) best = nested;
+        }
+        return best;
     }
 
     private Rect findTikTokPortraitVideoBounds(List<AccessibilityWindowInfo> windows, Rect screen) {
@@ -446,6 +495,28 @@ public class OverlayAccessibilityService extends AccessibilityService implements
             DiagnosticsStore.trace(this, "overlay.landscape", "Opening share in the full-screen player");
             tapTikTokLandscapeShare(screen.right - OverlaySettings.dp(this, 68),
                 screen.top + OverlaySettings.dp(this, 36), 0, System.currentTimeMillis() + 5000);
+            return;
+        }
+        if (REDNOTE.equals(app) && isRedNoteLandscapePlayer(root)) {
+            Rect screen = new Rect();
+            root.getBoundsInScreen(screen);
+            Rect video = findRedNoteLandscapeVideoBounds(root);
+            if (video.isEmpty()) {
+                Toast.makeText(this, "Open a video first", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            collecting = true;
+            landscapeCapture = true;
+            DiagnosticsStore.trace(this, "overlay.rednote_landscape", "Opening current full-screen share");
+            tapRedNoteLandscapeShare(video, screen, 0, System.currentTimeMillis() + 4000);
+            return;
+        }
+        if (REDNOTE.equals(app) && isRedNoteFullScreenPhoto(root)) {
+            collecting = true;
+            landscapeCapture = true;
+            DiagnosticsStore.trace(this, "overlay.rednote_photo_fullscreen",
+                "Opening current full-screen photo share");
+            tapRedNoteFullScreenPhotoShare(0, System.currentTimeMillis() + 4000);
             return;
         }
         AccessibilityNodeInfo share = null;
@@ -580,6 +651,81 @@ public class OverlayAccessibilityService extends AccessibilityService implements
                 failCollecting(new Exception("Could not tap TikTok's full-screen share control"));
             }
         }, handler)) failCollecting(new Exception("Could not send the share tap"));
+    }
+
+    private void tapRedNoteLandscapeShare(Rect video, Rect screen, int taps, long deadline) {
+        if (!collecting || !landscapeCapture) return;
+        boolean copyVisible = findActionInWindows("Copy link") != null ||
+            find(getRootInActiveWindow(), "Copy link") != null;
+        Log.d("MediaDownloader", "RedNote landscape share step=" + taps +
+            " copyVisible=" + copyVisible + " video=" + video.toShortString());
+        if (copyVisible) {
+            handler.postDelayed(() -> clickCopyWhenReady(REDNOTE, System.currentTimeMillis() + 4000), 120);
+            return;
+        }
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null || !REDNOTE.equals(String.valueOf(root.getPackageName())) ||
+            !isRedNoteLandscapePlayer(root)) {
+            failCollecting(new Exception("RedNote full-screen video changed before sharing"));
+            return;
+        }
+        if (taps >= 2 || System.currentTimeMillis() > deadline) {
+            failCollecting(new Exception("Could not open RedNote's full-screen share menu"));
+            return;
+        }
+        int x = video.right - OverlaySettings.dp(this, 30);
+        int y = screen.top + OverlaySettings.dp(this, 46);
+        Log.d("MediaDownloader", "RedNote landscape share tap x=" + x + " y=" + y);
+        tapRedNoteLandscapePoint(x, y, () ->
+            handler.postDelayed(() -> tapRedNoteLandscapeShare(video, screen, taps + 1, deadline), 900));
+    }
+
+    private void tapRedNoteLandscapePoint(int x, int y, Runnable afterTap) {
+        Path path = new Path();
+        path.moveTo(x, y);
+        android.accessibilityservice.GestureDescription gesture =
+            new android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 70))
+                .build();
+        if (!dispatchGesture(gesture, new GestureResultCallback() {
+            @Override public void onCompleted(android.accessibilityservice.GestureDescription ignored) {
+                if (collecting) afterTap.run();
+            }
+            @Override public void onCancelled(android.accessibilityservice.GestureDescription ignored) {
+                failCollecting(new Exception("Could not tap RedNote's full-screen share control"));
+            }
+        }, handler)) failCollecting(new Exception("Could not send the RedNote share tap"));
+    }
+
+    private void tapRedNoteFullScreenPhotoShare(int taps, long deadline) {
+        if (!collecting) return;
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null || !REDNOTE.equals(String.valueOf(root.getPackageName())) ||
+            !isRedNoteFullScreenPhoto(root)) {
+            failCollecting(new Exception("RedNote full-screen photo changed before sharing"));
+            return;
+        }
+        AccessibilityNodeInfo share = findNodeById(root, ":id/section_share");
+        AccessibilityNodeInfo action = clickableAncestor(share);
+        if (share != null && share.isVisibleToUser() && action != null &&
+            action.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            handler.postDelayed(() -> clickCopyWhenReady(REDNOTE,
+                System.currentTimeMillis() + 4000), 350);
+            return;
+        }
+        if (taps >= 2 || System.currentTimeMillis() > deadline) {
+            failCollecting(new Exception("Could not open RedNote's full-screen photo share menu"));
+            return;
+        }
+        AccessibilityNodeInfo image = findNodeById(root, ":id/iv_large_image");
+        Rect bounds = new Rect();
+        if (image != null) image.getBoundsInScreen(bounds);
+        if (bounds.isEmpty()) {
+            failCollecting(new Exception("Full-screen photo is not visible"));
+            return;
+        }
+        tapRedNoteLandscapePoint(bounds.centerX(), bounds.centerY(), () ->
+            handler.postDelayed(() -> tapRedNoteFullScreenPhotoShare(taps + 1, deadline), 300));
     }
 
     private void clickCopyWhenReady(String app, long deadline) {
