@@ -214,6 +214,63 @@ final class AlbumTransfer {
     private static PhotoFile fetch(Context context, StreamResolver.Result result, DownloadStore.Entry entry,
                                    StreamResolver.PhotoCandidate candidate, String url, File destination,
                                    Progress progress, boolean visitorCookies) throws Exception {
+        ResumeState resume = new ResumeState();
+        for (int retry = 0; retry <= 2; retry++) {
+            long resumeAt = MediaResponseLength.safeResumeOffset(destination.length(),
+                resume.total, resume.validator);
+            resume.continuationReady = false;
+            try {
+                NetworkWait.awaitIfOffline(context, () -> {
+                    entry.state = "waiting";
+                    entry.stage = "Waiting for connection";
+                    entry.downloadedBytes = savedBytes(entry) + destination.length();
+                    entry.speedBytesPerSecond = 0;
+                    progress.changed(entry, candidate.index, result.albumItems.size(), true);
+                });
+                if (retry > 0) {
+                    entry.state = "connecting";
+                    entry.stage = "Reconnecting photo " + candidate.index;
+                    progress.changed(entry, candidate.index, result.albumItems.size(), false);
+                }
+                return fetchOnce(context, result, entry, candidate, url, destination,
+                    progress, visitorCookies, resumeAt, resume);
+            } catch (java.io.IOException error) {
+                long partial = destination.length();
+                if (NetworkWait.awaitIfOffline(context, () -> {
+                    entry.state = "waiting";
+                    entry.stage = "Waiting for connection";
+                    entry.downloadedBytes = savedBytes(entry) + partial;
+                    entry.speedBytesPerSecond = 0;
+                    progress.changed(entry, candidate.index, result.albumItems.size(), true);
+                })) {
+                    DiagnosticsStore.trace(context, "album.network_restored", "job=" + entry.id +
+                        " index=" + candidate.index + " retained=" + partial);
+                    retry--;
+                    continue;
+                }
+                if (resumeAt > 0 && resume.total > 0 &&
+                    (!resume.continuationReady || partial >= resume.total) && retry < 2) {
+                    destination.delete();
+                    resume.total = -1;
+                    resume.validator = null;
+                    continue;
+                }
+                if (retry == 2 || resume.total <= 0 || partial >= resume.total) throw error;
+            }
+        }
+        throw new java.io.IOException("Photo could not resume after connection errors");
+    }
+
+    private static final class ResumeState {
+        long total = -1;
+        String validator;
+        boolean continuationReady;
+    }
+
+    private static PhotoFile fetchOnce(Context context, StreamResolver.Result result, DownloadStore.Entry entry,
+                                       StreamResolver.PhotoCandidate candidate, String url, File destination,
+                                       Progress progress, boolean visitorCookies, long resumeAt,
+                                       ResumeState resume) throws Exception {
         HttpURLConnection connection = NetworkRouteStore.open(new URL(url));
         try {
             connection.setConnectTimeout(15000);
@@ -225,6 +282,10 @@ final class AlbumTransfer {
             if (!("rednote".equals(result.platform) && new URL(url).getHost().endsWith(".xhscdn.com")))
                 connection.setRequestProperty("Referer", result.pageUrl);
             connection.setRequestProperty("Accept", "image/heic,image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8");
+            if (resumeAt > 0) {
+                connection.setRequestProperty("Range", "bytes=" + resumeAt + "-");
+                connection.setRequestProperty("If-Range", resume.validator);
+            }
             MediaRequestCookies.attach(connection, result.cookies, visitorCookies);
             long requestStarted = SystemClock.elapsedRealtime();
             DiagnosticsStore.trace(context, "album.request", "job=" + entry.id + " index=" + candidate.index +
@@ -239,29 +300,53 @@ final class AlbumTransfer {
             if (status != 200 && status != 206)
                 throw new Exception("Image server returned HTTP " + status);
             long length = connection.getContentLengthLong();
-            if (length > 40_000_000) throw new Exception("Photo exceeds 40 MB limit");
+            if (resumeAt > 0 && status == 200) resumeAt = 0;
+            if (resumeAt > 0) {
+                MediaResponseLength.verifyContinuationHeader(status, length,
+                    connection.getHeaderField("Content-Range"), resumeAt, resume.total);
+                MediaResponseLength.verifyValidator(resume.validator,
+                    connection.getHeaderField("ETag"),
+                    connection.getHeaderField("Last-Modified"));
+                resume.continuationReady = true;
+            }
+            if (resumeAt == 0) {
+                resume.total = MediaResponseLength.total(status, length,
+                    connection.getHeaderField("Content-Range"));
+                String etag = connection.getHeaderField("ETag");
+                resume.validator = etag != null && !etag.startsWith("W/") ? etag :
+                    connection.getHeaderField("Last-Modified");
+            }
+            if (resume.total > 40_000_000 || length > 40_000_000)
+                throw new Exception("Photo exceeds 40 MB limit");
             long previousBytes = 0;
             long previousTime = SystemClock.elapsedRealtime();
-            long written = 0;
-            try (InputStream input = connection.getInputStream(); OutputStream output = new FileOutputStream(destination)) {
+            long received = 0;
+            try (InputStream input = connection.getInputStream();
+                 OutputStream output = new FileOutputStream(destination, resumeAt > 0)) {
                 byte[] buffer = new byte[65536];
                 int count;
                 while ((count = input.read(buffer)) != -1) {
-                    written += count;
-                    if (written > 40_000_000) throw new Exception("Photo exceeds 40 MB limit");
+                    received += count;
+                    if (resumeAt + received > 40_000_000)
+                        throw new Exception("Photo exceeds 40 MB limit");
                     output.write(buffer, 0, count);
                     long now = SystemClock.elapsedRealtime();
                     if (now - previousTime >= 800) {
-                        entry.downloadedBytes = savedBytes(entry) + written;
-                        entry.speedBytesPerSecond = (written - previousBytes) * 1000 / Math.max(1, now - previousTime);
+                        entry.downloadedBytes = savedBytes(entry) + resumeAt + received;
+                        entry.speedBytesPerSecond = (received - previousBytes) * 1000 /
+                            Math.max(1, now - previousTime);
                         progress.changed(entry, candidate.index, result.albumItems.size(), false);
-                        previousBytes = written;
+                        previousBytes = received;
                         previousTime = now;
                     }
                 }
                 output.flush();
             }
-            MediaResponseLength.verify(status, length, connection.getHeaderField("Content-Range"), written);
+            if (resumeAt > 0) MediaResponseLength.verifyContinuation(status, length,
+                connection.getHeaderField("Content-Range"), resumeAt, resume.total, received);
+            else MediaResponseLength.verify(status, length,
+                connection.getHeaderField("Content-Range"), received);
+            long written = resumeAt + received;
             if (written < 100) throw new Exception("Image response was too short");
             byte[] head = new byte[12];
             try (InputStream input = new FileInputStream(destination)) {

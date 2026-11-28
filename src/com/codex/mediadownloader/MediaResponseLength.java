@@ -43,10 +43,32 @@ final class MediaResponseLength {
         }
     }
 
+    static long safeResumeOffset(long fileLength, long expectedTotal, String validator) {
+        return fileLength > 0 && expectedTotal > fileLength &&
+            validator != null && !validator.isEmpty() ? fileLength : 0;
+    }
+
+    static void verifyValidator(String original, String etag, String lastModified)
+        throws IOException {
+        if (original == null || original.isEmpty())
+            throw new IOException("Media resume has no original validator");
+        String returned = original.startsWith("\"") ? etag : lastModified;
+        if (returned != null && !original.equals(returned))
+            throw new IOException("Media resume validator changed");
+    }
+
     static void verifyContinuation(int status, long contentLength, String contentRange,
                                    long offset, long expectedTotal, long received) throws IOException {
-        if (status != 206 || offset <= 0 || expectedTotal <= offset || received < 0 ||
-            (contentLength >= 0 && received != contentLength))
+        verifyContinuationHeader(status, contentLength, contentRange, offset, expectedTotal);
+        if (received < 0 || (contentLength >= 0 && received != contentLength) ||
+            received != expectedTotal - offset)
+            throw new IOException("Media resume did not return the requested remaining bytes");
+    }
+
+    static void verifyContinuationHeader(int status, long contentLength, String contentRange,
+                                         long offset, long expectedTotal) throws IOException {
+        if (status != 206 || offset <= 0 || expectedTotal <= offset ||
+            (contentLength >= 0 && contentLength != expectedTotal - offset))
             throw new IOException("Media resume did not return the requested remaining bytes");
         Matcher range = RANGE.matcher(contentRange == null ? "" : contentRange.trim());
         if (!range.matches()) throw new IOException("Media resume has no valid Content-Range");
@@ -54,8 +76,7 @@ final class MediaResponseLength {
             long first = Long.parseLong(range.group(1));
             long last = Long.parseLong(range.group(2));
             long total = Long.parseLong(range.group(3));
-            if (first != offset || total != expectedTotal || last != total - 1 ||
-                received != total - offset)
+            if (first != offset || total != expectedTotal || last != total - 1)
                 throw new IOException("Media resume does not match the original file");
         } catch (NumberFormatException error) {
             throw new IOException("Media resume has an invalid Content-Range", error);

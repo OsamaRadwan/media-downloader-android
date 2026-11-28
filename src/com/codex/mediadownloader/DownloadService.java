@@ -180,9 +180,7 @@ public class DownloadService extends Service {
             notifications.notify(jobId, notice(jobId, title, "Finding post media", 0, true, true));
             StreamResolver.Trace trace = (component, detail) ->
                 DiagnosticsStore.trace(this, component, "job=" + jobId + " " + detail);
-            StreamResolver.Result result = InstagramResolver.accepts(shareUrl) ?
-                InstagramResolver.resolve(shareUrl, trace) : RedNoteResolver.accepts(shareUrl) ?
-                RedNoteResolver.resolve(shareUrl, trace) : StreamResolver.resolve(shareUrl, trace);
+            StreamResolver.Result result = resolveWhenConnected(shareUrl, jobId, entry, trace);
             if (retry && !entry.videoId.isEmpty() &&
                 (!result.videoId.equals(entry.videoId) ||
                  result.isAlbum() != "album".equals(entry.mediaType)))
@@ -335,6 +333,41 @@ public class DownloadService extends Service {
                 }
             }
         }
+    }
+
+    private StreamResolver.Result resolveWhenConnected(String shareUrl, int jobId,
+                                                       DownloadStore.Entry entry,
+                                                       StreamResolver.Trace trace) throws Exception {
+        while (true) {
+            waitForPostNetwork(jobId, entry);
+            try {
+                return InstagramResolver.accepts(shareUrl) ?
+                    InstagramResolver.resolve(shareUrl, trace) : RedNoteResolver.accepts(shareUrl) ?
+                    RedNoteResolver.resolve(shareUrl, trace) : StreamResolver.resolve(shareUrl, trace);
+            } catch (Exception error) {
+                if (!waitForPostNetwork(jobId, entry)) throw error;
+            }
+        }
+    }
+
+    private boolean waitForPostNetwork(int jobId, DownloadStore.Entry entry) throws java.io.IOException {
+        boolean waited = NetworkWait.awaitIfOffline(this, () -> {
+            entry.state = "waiting";
+            entry.stage = "Waiting for connection";
+            entry.speedBytesPerSecond = 0;
+            DownloadStore.save(this, entry, true);
+            notifications.notify(jobId, notice(jobId, "Download " + jobId,
+                entry.stage, 0, true, true));
+            DiagnosticsStore.trace(this, "download.waiting", "job=" + jobId + " stage=resolve");
+        });
+        if (waited) {
+            entry.state = "resolving";
+            entry.stage = "Finding post details";
+            DownloadStore.save(this, entry, false);
+            DiagnosticsStore.trace(this, "download.network_restored", "job=" + jobId +
+                " stage=resolve");
+        }
+        return waited;
     }
 
     private boolean canRetry(DownloadStore.Entry entry) {
@@ -611,8 +644,19 @@ public class DownloadService extends Service {
         long expectedTotal = -1;
         String validator = null;
         for (int retry = 0; retry <= 2; retry++) {
-            long resumeAt = retry == 0 ? 0 : file.length();
-            if (expectedTotal <= 0 || resumeAt >= expectedTotal) resumeAt = 0;
+            long retained = file.length();
+            long totalAtStart = expectedTotal;
+            NetworkWait.awaitIfOffline(this, () -> {
+                entry.state = "waiting";
+                entry.stage = "Waiting for connection";
+                entry.downloadedBytes = savedBytes + retained;
+                entry.speedBytesPerSecond = 0;
+                DownloadStore.save(this, entry, true);
+                notifications.notify(jobId, detailNotice(jobId, title, fileName,
+                    entry.stage, width, height, retained, totalAtStart, null));
+            });
+            long resumeAt = retry == 0 ? 0 :
+                MediaResponseLength.safeResumeOffset(file.length(), expectedTotal, validator);
             HttpEngine engine = profile == 5 && !NetworkRouteStore.usesProxy() ?
                 new HttpEngine.Builder(this).build() : null;
             HttpURLConnection connection = engine == null ? NetworkRouteStore.open(new URL(url)) :
@@ -637,6 +681,7 @@ public class DownloadService extends Service {
                 " host=" + connection.getURL().getHost() + " mode=" + (visitorCookies ? "visitor" : "public") +
                 " profile=" + profile + " listed=" + width + "x" + height +
                 " resumeAt=" + resumeAt + " retry=" + retry);
+            boolean continuationReady = false;
             try {
                 int code = connection.getResponseCode();
                 DiagnosticsStore.trace(this, "video.response", "job=" + jobId + " item=" + albumIndex +
@@ -652,6 +697,14 @@ public class DownloadService extends Service {
                     expectedTotal = -1;
                 }
                 long responseLength = connection.getContentLengthLong();
+                if (resumeAt > 0) {
+                    MediaResponseLength.verifyContinuationHeader(code, responseLength,
+                        connection.getHeaderField("Content-Range"), resumeAt, expectedTotal);
+                    MediaResponseLength.verifyValidator(validator,
+                        connection.getHeaderField("ETag"),
+                        connection.getHeaderField("Last-Modified"));
+                    continuationReady = true;
+                }
                 if (resumeAt == 0) {
                     expectedTotal = MediaResponseLength.total(code, responseLength,
                         connection.getHeaderField("Content-Range"));
@@ -723,13 +776,38 @@ public class DownloadService extends Service {
                 }
             } catch (java.io.IOException error) {
                 long partial = file.length();
-                if (retry == 2 || expectedTotal <= 0 || partial >= expectedTotal)
-                    throw error;
+                long totalAtWait = expectedTotal;
+                connection.disconnect();
+                if (NetworkWait.awaitIfOffline(this, () -> {
+                    entry.state = "waiting";
+                    entry.stage = "Waiting for connection";
+                    entry.downloadedBytes = savedBytes + partial;
+                    entry.speedBytesPerSecond = 0;
+                    DownloadStore.save(this, entry, true);
+                    notifications.notify(jobId, detailNotice(jobId, title, fileName,
+                        entry.stage, width, height, partial, totalAtWait, null));
+                })) {
+                    DiagnosticsStore.trace(this, "video.network_restored", "job=" + jobId +
+                        " item=" + albumIndex + " retained=" + partial);
+                    retry--;
+                    continue;
+                }
+                if (resumeAt > 0 && expectedTotal > 0 &&
+                    (!continuationReady || partial >= expectedTotal) && retry < 2) {
+                    // A changed or malformed continuation must not be appended to old bytes.
+                    file.delete();
+                    expectedTotal = -1;
+                    validator = null;
+                    DiagnosticsStore.trace(this, "video.restart", "job=" + jobId +
+                        " item=" + albumIndex + " cause=" + error.getClass().getSimpleName());
+                    continue;
+                }
+                if (retry == 2 || expectedTotal <= 0 || partial >= expectedTotal) throw error;
                 DiagnosticsStore.trace(this, "video.resume", "job=" + jobId +
                     " item=" + albumIndex + " received=" + partial +
                     " total=" + expectedTotal + " retry=" + (retry + 1) +
                     " cause=" + error.getClass().getSimpleName());
-                Log.w("MediaDownloader", "Resuming interrupted stream at " + partial +
+                Log.w("MediaDownloader", "Retrying interrupted stream at " + partial +
                     " of " + expectedTotal + " bytes", error);
             } finally {
                 connection.disconnect();
@@ -829,6 +907,8 @@ public class DownloadService extends Service {
             Character.toUpperCase(kind.charAt(0)) + kind.substring(1) + " " +
                 Math.min(current, total) + " of " + total +
                 " • " + saved + " saved • " + formatBytes(entry.downloadedBytes);
+        if ("waiting".equals(entry.state))
+            detail = "Waiting for connection • " + saved + " of " + total + " saved";
         return new Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)

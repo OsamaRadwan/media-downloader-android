@@ -27,7 +27,25 @@ public final class MediaResponseLengthTest {
             "an unsatisfied range");
         if (MediaResponseLength.total(206, 750, "bytes 0-749/1000") != 1000)
             throw new AssertionError("range total lost");
+        if (MediaResponseLength.safeResumeOffset(250, 1000, "\"etag\"") != 250 ||
+            MediaResponseLength.safeResumeOffset(250, 1000, null) != 0 ||
+            MediaResponseLength.safeResumeOffset(250, 1000, "") != 0 ||
+            MediaResponseLength.safeResumeOffset(1000, 1000, "\"etag\"") != 0 ||
+            MediaResponseLength.safeResumeOffset(250, -1, "\"etag\"") != 0)
+            throw new AssertionError("Unsafe resume offset");
         MediaResponseLength.verifyContinuation(206, 750, "bytes 250-999/1000", 250, 1000, 750);
+        MediaResponseLength.verifyContinuationHeader(206, 750, "bytes 250-999/1000", 250, 1000);
+        MediaResponseLength.verifyValidator("\"etag\"", "\"etag\"", null);
+        MediaResponseLength.verifyValidator("Wed, 21 Oct 2015 07:28:00 GMT", null,
+            "Wed, 21 Oct 2015 07:28:00 GMT");
+        reject(() -> MediaResponseLength.verifyValidator("\"etag\"", "\"changed\"", null),
+            "a changed validator");
+        reject(() -> MediaResponseLength.verifyContinuationHeader(206, 750,
+            "bytes 249-998/1000", 250, 1000), "wrong resume range before writing");
+        reject(() -> MediaResponseLength.verifyContinuationHeader(206, 750,
+            "bytes 250-999/1001", 250, 1000), "changed source before writing");
+        reject(() -> MediaResponseLength.verifyContinuationHeader(206, 749,
+            "bytes 250-999/1000", 250, 1000), "short advertised continuation");
         reject(() -> MediaResponseLength.verifyContinuation(200, 1000, null, 250, 1000, 1000),
             "a full response appended to partial bytes");
         reject(() -> MediaResponseLength.verifyContinuation(206, 750, "bytes 249-998/1000", 250, 1000, 750),
