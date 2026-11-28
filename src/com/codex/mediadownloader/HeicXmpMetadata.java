@@ -1,16 +1,22 @@
 package com.codex.mediadownloader;
 
 import java.io.File;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.FileOutputStream;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.HashSet;
 import java.util.Set;
 
-/** Updates an existing primary-image XMP item without re-encoding HEIC image data. */
+/** Updates or adds a primary-image XMP item without re-encoding HEIC image data. */
 final class HeicXmpMetadata {
     private static final int MAX_XMP_BYTES = 1_000_000;
+    private static final int MAX_META_BYTES = 4_000_000;
 
     private HeicXmpMetadata() { }
 
@@ -54,6 +60,317 @@ final class HeicXmpMetadata {
             output.seek(layout.lengthField);
             writeUnsigned(output, layout.lengthSize, bytes.length);
             output.getFD().sync();
+        }
+    }
+
+    /** Adds an item only to the simple single-meta, final-mdat layout we can rewrite safely. */
+    static void create(File file, String packet) throws Exception {
+        if (!PhotoSourceMetadata.ascii(packet)) throw new Exception("HEIC XMP is not ASCII-safe");
+        byte[] xmp = packet.getBytes(StandardCharsets.US_ASCII);
+        if (xmp.length < 1 || xmp.length > MAX_XMP_BYTES)
+            throw new Exception("Unsupported HEIC XMP length");
+        File temporary = File.createTempFile("heic-xmp-", ".tmp", file.getParentFile());
+        boolean replaced = false;
+        try {
+            try (RandomAccessFile input = new RandomAccessFile(file, "r")) {
+                long length = input.length();
+                Box ftyp = box(input, 0, length);
+                Box meta = box(input, ftyp.end(), length);
+                Box mdat = box(input, meta.end(), length);
+                if (ftyp.type != fourcc("ftyp") || meta.type != fourcc("meta") ||
+                    mdat.type != fourcc("mdat") || mdat.end() != length ||
+                    ftyp.header != 8 || meta.header != 8 ||
+                    meta.size > MAX_META_BYTES || mdat.extendsToEnd)
+                    throw new Exception("Unsupported HEIC container layout for new XMP");
+                Box pitm = null, iinf = null, iref = null, iloc = null;
+                for (long at = meta.payload() + 4; at < meta.end();) {
+                    Box child = box(input, at, meta.end());
+                    if (child.type == fourcc("pitm")) pitm = unique(pitm, child);
+                    if (child.type == fourcc("iinf")) iinf = unique(iinf, child);
+                    if (child.type == fourcc("iref")) iref = unique(iref, child);
+                    if (child.type == fourcc("iloc")) iloc = unique(iloc, child);
+                    at = child.end();
+                }
+                if (pitm == null || iinf == null || iref == null || iloc == null ||
+                    iinf.header != 8 || iref.header != 8 || iloc.header != 8)
+                    throw new Exception("HEIC image metadata is incomplete");
+                long primary = primary(input, pitm);
+                ItemIds ids = itemIds(input, iinf);
+                if (ids.hasXmp || !ids.ids.contains(primary) || ids.maximum >= 65535)
+                    throw new Exception("HEIC cannot accept a new XMP item ID");
+                long newId = ids.maximum + 1;
+                byte[] newIinf = addItemInfo(input, iinf, newId);
+                byte[] newIref = addReference(input, iref, newId, primary);
+                LocationEdit edit = addLocation(input, iloc, mdat, primary, newId, xmp.length);
+                byte[] newMeta = rebuildMeta(input, meta, iinf, newIinf, iref, newIref,
+                    iloc, edit.bytes);
+                long delta = newMeta.length - meta.size;
+                long xmpOffset = length + delta;
+                for (OffsetField field : edit.offsets)
+                    putUnsigned(edit.bytes, field.position, edit.offsetSize, field.value + delta);
+                putUnsigned(edit.bytes, edit.newOffsetField, edit.offsetSize, xmpOffset);
+                newMeta = rebuildMeta(input, meta, iinf, newIinf, iref, newIref,
+                    iloc, edit.bytes);
+                long newMdatSize = mdat.size + xmp.length;
+                if (newMdatSize < mdat.size || mdat.header == 8 && !fits(newMdatSize, 4))
+                    throw new Exception("HEIC media box exceeds its field size");
+                try (FileOutputStream output = new FileOutputStream(temporary)) {
+                    copy(input, output, 0, ftyp.size);
+                    output.write(newMeta);
+                    input.seek(mdat.start);
+                    byte[] header = new byte[mdat.header];
+                    input.readFully(header);
+                    putUnsigned(header, mdat.header == 16 ? 8 : 0,
+                        mdat.header == 16 ? 8 : 4, newMdatSize);
+                    output.write(header);
+                    copy(input, output, mdat.payload(), mdat.size - mdat.header);
+                    output.write(xmp);
+                    output.getFD().sync();
+                }
+            }
+            try {
+                if (!packet.equals(read(temporary)))
+                    throw new java.io.IOException("New HEIC XMP did not round-trip");
+            } catch (java.io.IOException failure) {
+                throw failure;
+            } catch (Exception invalid) {
+                throw new java.io.IOException("New HEIC XMP could not be verified", invalid);
+            }
+            Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            replaced = true;
+        } finally {
+            if (!replaced) temporary.delete();
+        }
+    }
+
+    private static ItemIds itemIds(RandomAccessFile file, Box box) throws Exception {
+        file.seek(box.payload());
+        int version = file.readUnsignedByte();
+        file.skipBytes(3);
+        if (version != 0 && version != 1) throw new Exception("Unsupported HEIC item-info version");
+        long count = readUnsigned(file, version == 0 ? 2 : 4, box.end());
+        if (count > 10000) throw new Exception("Too many HEIC items");
+        ItemIds result = new ItemIds();
+        int seen = 0;
+        for (long at = file.getFilePointer(); at < box.end();) {
+            Box entry = box(file, at, box.end());
+            if (entry.type != fourcc("infe")) throw new Exception("Unsupported HEIC item-info entry");
+            seen++;
+            file.seek(entry.payload());
+            int entryVersion = file.readUnsignedByte();
+            file.skipBytes(3);
+            if (entryVersion != 2 && entryVersion != 3)
+                throw new Exception("Unsupported HEIC item-info entry version");
+            long id = readUnsigned(file, entryVersion == 2 ? 2 : 4, entry.end());
+            if (!result.ids.add(id)) throw new Exception("Duplicate HEIC item ID");
+            result.maximum = Math.max(result.maximum, id);
+            readUnsigned(file, 2, entry.end());
+            if (readUnsigned(file, 4, entry.end()) == fourcc("mime")) {
+                cString(file, entry.end());
+                if ("application/rdf+xml".equals(cString(file, entry.end()))) result.hasXmp = true;
+            }
+            at = entry.end();
+        }
+        if (seen != count) throw new Exception("HEIC item-info count mismatch");
+        return result;
+    }
+
+    private static byte[] addItemInfo(RandomAccessFile file, Box box, long id) throws Exception {
+        byte[] original = bytes(file, box);
+        int version = original[8] & 255;
+        int countSize = version == 0 ? 2 : 4;
+        long count = unsigned(original, 12, countSize);
+        if (!fits(count + 1, countSize)) throw new Exception("HEIC item-info count overflow");
+        ByteArrayOutputStream payload = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(payload);
+        out.writeInt(0x02000000);
+        out.writeShort((int) id);
+        out.writeShort(0);
+        out.writeBytes("mime");
+        out.writeBytes("XMP"); out.writeByte(0);
+        out.writeBytes("application/rdf+xml"); out.writeByte(0);
+        byte[] added = boxBytes("infe", payload.toByteArray());
+        byte[] result = append(original, added);
+        putUnsigned(result, 0, 4, result.length);
+        putUnsigned(result, 12, countSize, count + 1);
+        return result;
+    }
+
+    private static byte[] addReference(RandomAccessFile file, Box box, long id,
+                                       long primary) throws Exception {
+        byte[] original = bytes(file, box);
+        int version = original[8] & 255;
+        if (version != 0 && version != 1) throw new Exception("Unsupported HEIC reference version");
+        int width = version == 0 ? 2 : 4;
+        if (!fits(id, width) || !fits(primary, width))
+            throw new Exception("HEIC reference ID overflow");
+        ByteArrayOutputStream payload = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(payload);
+        writeUnsigned(out, width, id);
+        out.writeShort(1);
+        writeUnsigned(out, width, primary);
+        byte[] result = append(original, boxBytes("cdsc", payload.toByteArray()));
+        putUnsigned(result, 0, 4, result.length);
+        return result;
+    }
+
+    private static LocationEdit addLocation(RandomAccessFile file, Box box, Box mdat,
+                                            long primary, long id, int xmpLength) throws Exception {
+        byte[] original = bytes(file, box);
+        int version = original[8] & 255;
+        if (version > 2) throw new Exception("Unsupported HEIC location version");
+        int offsetSize = (original[12] & 255) >> 4;
+        int lengthSize = original[12] & 15;
+        int baseSize = (original[13] & 255) >> 4;
+        int indexSize = version == 0 ? 0 : original[13] & 15;
+        if (offsetSize < 1 || offsetSize > 8 || lengthSize < 1 || lengthSize > 8 ||
+            baseSize != 0 || indexSize != 0 || !fits(xmpLength, lengthSize))
+            throw new Exception("Unsupported HEIC location field widths");
+        int countSize = version == 2 ? 4 : 2;
+        long count = unsigned(original, 14, countSize);
+        if (count > 10000 || !fits(count + 1, countSize))
+            throw new Exception("HEIC location count overflow");
+        int position = 14 + countSize;
+        java.util.ArrayList<OffsetField> offsets = new java.util.ArrayList<>();
+        boolean primaryLocated = false;
+        for (long i = 0; i < count; i++) {
+            int idSize = version == 2 ? 4 : 2;
+            long itemId = unsigned(original, position, idSize); position += idSize;
+            int method = version == 0 ? 0 : (int) unsigned(original, position, 2) & 15;
+            if (version != 0) position += 2;
+            long reference = unsigned(original, position, 2); position += 2;
+            long extents = unsigned(original, position, 2); position += 2;
+            if (reference != 0 || extents > 10000 || method > 1)
+                throw new Exception("Unsupported HEIC item location");
+            if (itemId == id) throw new Exception("Duplicate HEIC item location");
+            if (itemId == primary) primaryLocated = true;
+            for (long e = 0; e < extents; e++) {
+                long offset = unsigned(original, position, offsetSize);
+                if (method == 0) {
+                    if (offset < mdat.payload() || offset > mdat.end())
+                        throw new Exception("HEIC item is outside the media box");
+                    offsets.add(new OffsetField(position, offset));
+                }
+                position += offsetSize;
+                long length = unsigned(original, position, lengthSize); position += lengthSize;
+                if (method == 0 && length > mdat.end() - offset)
+                    throw new Exception("HEIC item extends past the media box");
+            }
+        }
+        if (position != original.length || !primaryLocated)
+            throw new Exception("HEIC locations do not match their count");
+        ByteArrayOutputStream payload = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(payload);
+        writeUnsigned(out, version == 2 ? 4 : 2, id);
+        if (version != 0) out.writeShort(0); // file construction method
+        out.writeShort(0); // data reference index
+        out.writeShort(1); // extent count
+        int newOffsetField = original.length + payload.size();
+        writeUnsigned(out, offsetSize, 0);
+        writeUnsigned(out, lengthSize, xmpLength);
+        byte[] result = append(original, payload.toByteArray());
+        putUnsigned(result, 0, 4, result.length);
+        putUnsigned(result, 14, countSize, count + 1);
+        return new LocationEdit(result, offsets, newOffsetField, offsetSize);
+    }
+
+    private static byte[] rebuildMeta(RandomAccessFile file, Box meta, Box iinf, byte[] info,
+                                      Box iref, byte[] references, Box iloc,
+                                      byte[] locations) throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] prefix = new byte[12];
+        file.seek(meta.start); file.readFully(prefix);
+        output.write(prefix);
+        for (long at = meta.payload() + 4; at < meta.end();) {
+            Box child = box(file, at, meta.end());
+            output.write(at == iinf.start ? info : at == iref.start ? references :
+                at == iloc.start ? locations : bytes(file, child));
+            at = child.end();
+        }
+        byte[] result = output.toByteArray();
+        putUnsigned(result, 0, 4, result.length);
+        return result;
+    }
+
+    private static byte[] bytes(RandomAccessFile file, Box box) throws Exception {
+        if (box.size > MAX_META_BYTES) throw new Exception("HEIC metadata box is too large");
+        byte[] result = new byte[(int) box.size];
+        file.seek(box.start); file.readFully(result);
+        return result;
+    }
+
+    private static byte[] boxBytes(String type, byte[] payload) throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeInt(payload.length + 8);
+        out.writeBytes(type);
+        out.write(payload);
+        return bytes.toByteArray();
+    }
+
+    private static byte[] append(byte[] first, byte[] second) {
+        byte[] result = java.util.Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, result, first.length, second.length);
+        return result;
+    }
+
+    private static long unsigned(byte[] data, int position, int width) throws Exception {
+        if (position < 0 || width < 1 || width > 8 || position + width > data.length)
+            throw new Exception("Truncated HEIC item field");
+        long value = 0;
+        for (int i = 0; i < width; i++) value = (value << 8) | (data[position + i] & 255);
+        if (value < 0) throw new Exception("HEIC item field exceeds signed range");
+        return value;
+    }
+
+    private static void putUnsigned(byte[] data, int position, int width, long value)
+            throws Exception {
+        if (!fits(value, width) || position < 0 || position + width > data.length)
+            throw new Exception("HEIC field overflow");
+        for (int i = width - 1; i >= 0; i--) {
+            data[position + i] = (byte) value;
+            value >>>= 8;
+        }
+    }
+
+    private static void writeUnsigned(DataOutputStream output, int width, long value)
+            throws Exception {
+        if (!fits(value, width)) throw new Exception("HEIC field overflow");
+        for (int i = width - 1; i >= 0; i--) output.write((int) (value >>> (8 * i)) & 255);
+    }
+
+    private static void copy(RandomAccessFile input, FileOutputStream output, long at,
+                             long length) throws Exception {
+        input.seek(at);
+        byte[] buffer = new byte[64 * 1024];
+        while (length > 0) {
+            int count = (int) Math.min(length, buffer.length);
+            input.readFully(buffer, 0, count);
+            output.write(buffer, 0, count);
+            length -= count;
+        }
+    }
+
+    private static final class ItemIds {
+        final Set<Long> ids = new HashSet<>();
+        long maximum;
+        boolean hasXmp;
+    }
+
+    private static final class OffsetField {
+        final int position;
+        final long value;
+        OffsetField(int position, long value) { this.position = position; this.value = value; }
+    }
+
+    private static final class LocationEdit {
+        final byte[] bytes;
+        final java.util.ArrayList<OffsetField> offsets;
+        final int newOffsetField, offsetSize;
+        LocationEdit(byte[] bytes, java.util.ArrayList<OffsetField> offsets,
+                     int newOffsetField, int offsetSize) {
+            this.bytes = bytes; this.offsets = offsets;
+            this.newOffsetField = newOffsetField; this.offsetSize = offsetSize;
         }
     }
 

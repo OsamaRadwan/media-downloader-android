@@ -304,15 +304,26 @@ final class AlbumTransfer {
                 try {
                     previousXmp = HeicXmpMetadata.read(file);
                 } catch (Exception unsupported) {
-                    // Preserve the existing record-only behavior for HEIC layouts
-                    // that cannot be updated without rewriting image data.
-                    DiagnosticsStore.trace(context, "photo.heic_xmp",
-                        "Unsupported HEIC metadata layout; retaining source details in the download record");
+                    // A primary-image XMP item may be absent; try creating one below.
                 }
+                String xmp = PhotoSourceMetadata.xmp(previousXmp, comment,
+                    result.profileName, result.postText);
+                boolean embedded = previousXmp != null;
                 if (previousXmp != null) {
-                    String xmp = PhotoSourceMetadata.xmp(previousXmp, comment,
-                        result.profileName, result.postText);
                     HeicXmpMetadata.write(file, xmp);
+                } else {
+                    try {
+                        HeicXmpMetadata.create(file, xmp);
+                        embedded = true;
+                    } catch (java.io.IOException writeFailure) {
+                        throw writeFailure;
+                    } catch (Exception unsupported) {
+                        // Unknown HEIC layouts keep their existing record-only metadata.
+                        DiagnosticsStore.trace(context, "photo.heic_xmp",
+                            "Unsupported HEIC metadata layout; retaining source details in the download record");
+                    }
+                }
+                if (embedded) {
                     if (!xmp.equals(HeicXmpMetadata.read(file)))
                         throw new Exception("Saved HEIC XMP did not match the source post");
                     if (!xmp.equals(new ExifInterface(file).getAttribute(ExifInterface.TAG_XMP)))

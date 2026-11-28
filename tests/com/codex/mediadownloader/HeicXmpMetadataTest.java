@@ -35,6 +35,27 @@ public final class HeicXmpMetadataTest {
                     "Update must append only the new XMP bytes");
             } finally { file.delete(); }
         }
+        File noXmp = File.createTempFile("heic-new-xmp", ".heic");
+        try {
+            byte[] original = containerNoXmp();
+            Files.write(noXmp.toPath(), original);
+            HeicXmpMetadata.create(noXmp, OLD_XMP);
+            byte[] saved = Files.readAllBytes(noXmp.toPath());
+            check(OLD_XMP.equals(HeicXmpMetadata.read(noXmp)),
+                "A new XMP item must describe the primary image");
+            check(Arrays.equals(Arrays.copyOfRange(original, original.length - MEDIA.length,
+                original.length), Arrays.copyOfRange(saved,
+                saved.length - OLD_XMP.length() - MEDIA.length,
+                saved.length - OLD_XMP.length())),
+                "Creating an XMP item must preserve original media bytes");
+            try {
+                HeicXmpMetadata.create(noXmp, OLD_XMP);
+                throw new AssertionError("A second XMP item must be rejected");
+            } catch (Exception expected) {
+                check(Arrays.equals(saved, Files.readAllBytes(noXmp.toPath())),
+                    "Rejected duplicate XMP creation must leave the file intact");
+            }
+        } finally { noXmp.delete(); }
         File unsupported = File.createTempFile("heic-no-reference", ".heic");
         try {
             byte[] original = container(false, false);
@@ -69,6 +90,37 @@ public final class HeicXmpMetadataTest {
             mdat = bytes.toByteArray();
         } else mdat = box("mdat", payload);
         return concat(ftyp, meta, mdat);
+    }
+
+    private static byte[] containerNoXmp() throws Exception {
+        byte[] ftyp = box("ftyp", concat("heic".getBytes(StandardCharsets.US_ASCII),
+            new byte[]{0, 0, 0, 0}, "heic".getBytes(StandardCharsets.US_ASCII)));
+        byte[] meta = metaNoXmp(0);
+        meta = metaNoXmp(ftyp.length + meta.length + 8);
+        return concat(ftyp, meta, box("mdat", MEDIA));
+    }
+
+    private static byte[] metaNoXmp(int offset) throws Exception {
+        byte[] pitm = box("pitm", data(out -> { out.writeInt(0); out.writeShort(1); }));
+        byte[] infe = box("infe", data(out -> {
+            out.writeInt(0x02000000);
+            out.writeShort(1);
+            out.writeShort(0);
+            out.writeBytes("hvc1");
+            out.writeBytes("Image"); out.writeByte(0);
+        }));
+        byte[] iinf = box("iinf", concat(data(out -> {
+            out.writeInt(0); out.writeShort(1);
+        }), infe));
+        byte[] iref = box("iref", new byte[4]);
+        byte[] iloc = box("iloc", data(out -> {
+            out.writeInt(0x01000000);
+            out.writeByte(0x44); out.writeByte(0);
+            out.writeShort(1); out.writeShort(1);
+            out.writeShort(0); out.writeShort(0);
+            out.writeShort(1); out.writeInt(offset); out.writeInt(MEDIA.length);
+        }));
+        return box("meta", concat(new byte[4], pitm, iinf, iref, iloc));
     }
 
     private static int payloadOffset(boolean extended, boolean linked) throws Exception {
