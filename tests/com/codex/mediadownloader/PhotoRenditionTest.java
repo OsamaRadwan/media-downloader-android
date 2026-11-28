@@ -53,11 +53,17 @@ public final class PhotoRenditionTest {
             !PhotoQuality.matchesListed(1500, 1500, 0, 0),
             "Downloads resolution label must use eligible aspect and total pixels");
         String redNoteAsset = "notes_pre_post/0123456789abcdef0123456789abcdef01234567";
+        String redNoteUltraAsset = "note_pre_post_uhdr/0123456789abcdef0123456789abcdef01234567";
         check(RedNotePhotoPath.valid(redNoteAsset) &&
             RedNotePhotoPath.originalUrl(redNoteAsset).equals(
                 "https://sns-img-hw.xhscdn.com/" + redNoteAsset) &&
+            RedNotePhotoPath.valid(redNoteUltraAsset) &&
+            RedNotePhotoPath.originalUrl(redNoteUltraAsset).equals(
+                "https://sns-img-hw.xhscdn.com/" + redNoteUltraAsset) &&
             RedNotePhotoPath.valid("0123456789abcdef0123456789abcdef") &&
             !RedNotePhotoPath.valid("notes_pre_post/../outside") &&
+            !RedNotePhotoPath.valid("note_pre_post_uhdr/../outside") &&
+            !RedNotePhotoPath.valid(redNoteUltraAsset + "?token=secret") &&
             !RedNotePhotoPath.valid(redNoteAsset + "?token=secret") &&
             !RedNotePhotoPath.valid("notes_pre_post/short"),
             "RedNote original paths must admit observed assets without unsafe suffixes");
