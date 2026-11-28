@@ -4,6 +4,8 @@ This log distinguishes code installed locally from GitHub releases. It summarize
 
 ## Local development bundle after v1.68 — not yet published
 
+- **Failed Instagram card link check (phone verified, no app change):** A visible public Reel sent with a synthetic `igsh` parameter produced a failed no-audio card. Its Open in Instagram action returned to the same clip; Instagram reported the exact shortcode, a query-free post URL, and no `igsh` ID. All 24 Java suites and the signed build passed. The test card remains in history; no release was published.
+
 - **RedNote Android HTTP 206 video check (phone tested, no retained app change):** A temporary full-range request produced HTTP 206 for a public original stream. The phone saved a 182,363,238-byte 2160×3840 HEVC/AAC MP4; the pulled file fully decoded with both tracks and held the exact query-free post link. The temporary request was removed and the prior signed APK reinstalled with Accessibility enabled. Photo, truncated-response, fallback, TikTok, and Instagram checks remain pending. No release was published.
 
 - **HTTP 200 partial-range guard (Java tested, installed, unreleased):** Media response validation now rejects an HTTP 200 body whose `Content-Range` describes only part of the file, even when its `Content-Length` matches that partial body. A complete declared range remains eligible. All 24 Java suites and the signed build passed; the APK installed on the HMD Skyline and its Accessibility service stayed enabled. A naturally occurring partial-range response through the Android transfer remains unverified. No release was published.
