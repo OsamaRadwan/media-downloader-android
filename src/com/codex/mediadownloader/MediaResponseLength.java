@@ -15,10 +15,11 @@ final class MediaResponseLength {
         throws IOException {
         if (written < 0 || (contentLength >= 0 && written != contentLength))
             throw new IOException("Media response ended before its declared byte length");
-        if (status == 200) return;
-        if (status != 206)
+        String declaredRange = contentRange == null ? "" : contentRange.trim();
+        if (status == 200 && declaredRange.isEmpty()) return;
+        if (status != 200 && status != 206)
             throw new IOException("Media response was not a complete file");
-        Matcher range = RANGE.matcher(contentRange == null ? "" : contentRange.trim());
+        Matcher range = RANGE.matcher(declaredRange);
         if (!range.matches())
             throw new IOException("Partial media response has no valid Content-Range");
         try {
